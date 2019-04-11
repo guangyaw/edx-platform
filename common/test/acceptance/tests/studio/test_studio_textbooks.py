@@ -83,7 +83,7 @@ class TextbooksTest(StudioCourseTest):
             'ignore': [
                 'section',  # AC-503
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
-                'region',
+                'region',  # TODO: AC-932
             ],
         })
         self.textbook_view_page.a11y_audit.check_for_accessibility_errors()
@@ -105,13 +105,13 @@ class TextbooksTest(StudioCourseTest):
         )
         self.textbook_view_page.a11y_audit.config.set_rules({
             'ignore': [
-                'html-has-lang',
-                'label-title-only',
-                'landmark-one-main',
-                'page-has-heading-one',
-                'region',
-                'link-href',
-                'bypass'
+                'html-has-lang',  # TODO: AC-942
+                'label-title-only',  # TODO: AC-493
+                'landmark-one-main',  # TODO: AC-944
+                'page-has-heading-one',  # TODO: AC-945
+                'region',  # TODO: AC-932
+                'link-href',  # TODO: AC-559
+                'skip-link'  # TODO: AC-937
             ],
         })
         self.textbook_view_page.a11y_audit.check_for_accessibility_errors()

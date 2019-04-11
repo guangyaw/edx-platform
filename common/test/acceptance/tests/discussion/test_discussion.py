@@ -229,7 +229,7 @@ class DiscussionHomePageTest(BaseDiscussionTestCase):
                 'section',  # TODO: AC-491
                 'aria-required-children',  # TODO: AC-534
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
-                'region',
+                'region'  # TODO: AC-932
             ]
         })
         self.page.a11y_audit.check_for_accessibility_errors()
@@ -468,7 +468,7 @@ class DiscussionTabMultipleThreadTest(BaseDiscussionTestCase, BaseDiscussionMixi
                 'section',  # TODO: AC-491
                 'aria-required-children',  # TODO: AC-534
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
-                'region',
+                'region',  # TODO: AC-932
             ]
         })
 
@@ -543,7 +543,7 @@ class DiscussionOpenClosedThreadTest(BaseDiscussionTestCase):
                 'aria-required-children',  # TODO: AC-534
                 'color-contrast',  # Commented out for now because they reproducibly fail on Jenkins but not locally
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
-                'region',
+                'region',  # TODO: AC-932
             ]
         })
         page.a11y_audit.check_for_accessibility_errors()
@@ -555,7 +555,7 @@ class DiscussionOpenClosedThreadTest(BaseDiscussionTestCase):
                 'aria-required-children',  # TODO: AC-534
                 'color-contrast',  # Commented out for now because they reproducibly fail on Jenkins but not locally
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
-                'region',
+                'region',  # TODO: AC-932
             ]
         })
         page.a11y_audit.check_for_accessibility_errors()
@@ -850,7 +850,7 @@ class DiscussionResponseEditTest(BaseDiscussionTestCase):
                 'section',  # TODO: AC-491
                 'aria-required-children',  # TODO: AC-534
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
-                'region',
+                'region',  # TODO: AC-932
             ]
         })
         page.visit()
@@ -953,7 +953,7 @@ class DiscussionCommentEditTest(BaseDiscussionTestCase):
                 'section',  # TODO: AC-491
                 'aria-required-children',  # TODO: AC-534
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
-                'region',
+                'region',  # TODO: AC-932
             ]
         })
         page.a11y_audit.check_for_accessibility_errors()
@@ -1399,7 +1399,7 @@ class DiscussionSearchAlertTest(UniqueCourseTest):
                 'section',  # TODO: AC-491
                 'aria-required-children',  # TODO: AC-534
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
-                'region',
+                'region',  # TODO: AC-932
             ]
         })
         self.page.a11y_audit.check_for_accessibility_errors()

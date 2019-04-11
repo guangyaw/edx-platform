@@ -619,7 +619,7 @@ class AnnotationProblemTypeBase(ProblemTypeTestBase):
         self.problem_page.a11y_audit.config.set_rules({
             "ignore": [
                 'label',  # TODO: AC-491
-                'label-title-only',
+                'label-title-only',  # TODO: AC-493
             ]
         })
 

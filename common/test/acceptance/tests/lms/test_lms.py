@@ -533,7 +533,7 @@ class CourseWikiA11yTest(UniqueCourseTest):
         self.course_wiki_page.a11y_audit.config.set_rules({
             "ignore": [
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
-                'region',
+                'region',  # TODO: AC-932
             ]
         })
         self.course_wiki_page.a11y_audit.check_for_accessibility_errors()
@@ -546,7 +546,7 @@ class CourseWikiA11yTest(UniqueCourseTest):
         self.course_wiki_edit_page.a11y_audit.config.set_rules({
             "ignore": [
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
-                'region',
+                'region',  # TODO: AC-932
             ]
         })
         self.course_wiki_edit_page.a11y_audit.check_for_accessibility_errors()
@@ -560,7 +560,7 @@ class CourseWikiA11yTest(UniqueCourseTest):
         history_page.a11y_audit.config.set_rules({
             "ignore": [
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
-                'region',
+                'region',  # TODO: AC-932
             ]
         })
         history_page.wait_for_page()
@@ -575,7 +575,7 @@ class CourseWikiA11yTest(UniqueCourseTest):
         children_page.a11y_audit.config.set_rules({
             "ignore": [
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
-                'region',
+                'region',  # TODO: AC-932
             ]
         })
         children_page.wait_for_page()
