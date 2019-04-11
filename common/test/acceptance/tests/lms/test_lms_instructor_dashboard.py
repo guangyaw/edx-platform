@@ -117,8 +117,8 @@ class BulkEmailTest(BaseInstructorDashboardTest):
             "ignore": [
                 'button-name',  # TODO: TNL-5830
                 'aria-allowed-role',  # TODO: AC-936
-                'color-contrast',
-                # 'listitem'  # TODO: AC-937
+                'color-contrast',  # TODO: AC-938
+                'listitem'  # TODO: AC-937
             ]
         })
         self.send_email_page.a11y_audit.check_for_accessibility_errors()
@@ -1333,7 +1333,7 @@ class CertificateInvalidationTest(BaseInstructorDashboardTest):
         """
         self.certificates_section.a11y_audit.config.set_rules({
             "ignore": [
-                # 'aria-hidden-focus'  #TODO: AC-938
+                'aria-hidden-focus'  #TODO: AC-938
             ]
         })
         self.certificates_section.a11y_audit.config.set_scope([

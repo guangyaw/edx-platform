@@ -718,7 +718,7 @@ class LearnerProfileA11yTest(LearnerProfileTestMixin, AcceptanceTest):
             "ignore": [
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
                 'region',  # TODO: AC-932
-                'color-contrast'
+                'color-contrast'  # Commented out for now because they reproducibly fail on Jenkins but not locally
             ]
         })
         profile_page.display_accomplishments()

@@ -690,7 +690,6 @@ class CohortConfigurationTest(EventsTestMixin, UniqueCourseTest, CohortTestMixin
         """
         Run accessibility audit for cohort management.
         """
-        import pdb; pdb.set_trace()
         self.cohort_management_page.a11y_audit.config.set_rules({
             "ignore": [
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
