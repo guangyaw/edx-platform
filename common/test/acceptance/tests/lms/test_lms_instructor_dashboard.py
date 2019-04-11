@@ -1119,7 +1119,7 @@ class CertificatesTest(BaseInstructorDashboardTest):
         """
         self.certificates_section.a11y_audit.config.set_rules({
             "ignore": [
-                'aria-hidden-focus'  #TODO: AC-938
+                'aria-hidden-focus'  # TODO: AC-938
             ]
         })
         self.certificates_section.a11y_audit.config.set_scope([
@@ -1333,7 +1333,7 @@ class CertificateInvalidationTest(BaseInstructorDashboardTest):
         """
         self.certificates_section.a11y_audit.config.set_rules({
             "ignore": [
-                'aria-hidden-focus'  #TODO: AC-938
+                'aria-hidden-focus'  # TODO: AC-938
             ]
         })
         self.certificates_section.a11y_audit.config.set_scope([
