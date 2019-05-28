@@ -76,7 +76,7 @@ def unidlink(request):
 @ensure_csrf_cookie
 def signin_nid(request):
     returnto = reverse('nretrun_nid')
-    return redirect('https://opendata.fcu.edu.tw/fcuOauth/Auth.aspx?client_id=636945766378.8f3069259d9b4c07b2e6346bfb226fd5.sandbox.openedu.tw&client_url=http://xhome.twshop.asia'+returnto)
+    return redirect('https://opendata.fcu.edu.tw/fcuOauth/Auth.aspx?client_id=636945766378.8f3069259d9b4c07b2e6346bfb226fd5.sandbox.openedu.tw&client_url=https://sandbox.openedu.tw'+returnto)
 
 
 @csrf_exempt
