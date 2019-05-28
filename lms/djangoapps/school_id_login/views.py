@@ -69,7 +69,7 @@ def unidlink(request):
         else:
             raise AuthFailedError(_('There is no FCU_NID bind'))
 
-    redirect_url = "https://www.openedu.tw"
+    redirect_url = "http://xhome.twshop.asia"
     return redirect(redirect_url)
 
 
