@@ -69,14 +69,14 @@ def unidlink(request):
         else:
             raise AuthFailedError(_('There is no FCU_NID bind'))
 
-    redirect_url = "https://www.openedu.tw"
+    redirect_url = "https://sandbox.openedu.tw"
     return redirect(redirect_url)
 
 
 @ensure_csrf_cookie
 def signin_nid(request):
     returnto = reverse('nretrun_nid')
-    return redirect('https://opendata.fcu.edu.tw/fcuOauth/Auth.aspx?client_id=636910339051.6e6173acc349473d81ea95d62c827e31.xhome.twshop.asia&client_url=http://xhome.twshop.asia'+returnto)
+    return redirect('https://opendata.fcu.edu.tw/fcuOauth/Auth.aspx?client_id=636945766378.8f3069259d9b4c07b2e6346bfb226fd5.sandbox.openedu.tw&client_url=http://xhome.twshop.asia'+returnto)
 
 
 @csrf_exempt
@@ -88,7 +88,7 @@ def return_nid(request):
     if int(request.POST['status']) == 200:
         # test
         getinfourl = 'https://opendata.fcu.edu.tw/fcuapi/api/GetUserInfo'
-        sdata = {"client_id": '636910339051.6e6173acc349473d81ea95d62c827e31.xhome.twshop.asia', "user_code": request.POST['user_code'] }
+        sdata = {"client_id": '636945766378.8f3069259d9b4c07b2e6346bfb226fd5.sandbox.openedu.tw', "user_code": request.POST['user_code'] }
         r = requests.get(getinfourl, params=sdata)
         if int(r.status_code) == 200:
             resp = json.loads(r.text)

@@ -333,9 +333,9 @@
                                     valueAttribute: 'auth-' + provider.id,
                                     helpMessage: '',
                                     connected: nid_bind_flag,
-                                    connectUrl: "https://courses.openedu.tw/nidlogin",
+                                    connectUrl: "https://sandbox.openedu.tw/nidlogin",
                                     acceptsLogins: provider.accepts_logins,
-                                    disconnectUrl: "https://courses.openedu.tw/unlink_account",
+                                    disconnectUrl: "https://sandbox.openedu.tw/unlink_account",
                                     platformName: platformName
                                 })
                             };
