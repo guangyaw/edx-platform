@@ -260,13 +260,13 @@
         },
 
         setActiveSpeed: function(speed) {
-            var speedOption = this.speedsContainer.find('li[data-speed="' + speed + '"]');
+            var speedOption = this.speedsContainer.find('li[data-speed="' + this.state.speedToString(speed) + '"]');
 
             speedOption.addClass('is-active')
                 .find('.speed-option')
                 .attr('aria-pressed', 'true');
 
-            this.speedButton.attr('title', gettext('Video speed: ') + speed + 'x');
+            this.speedButton.attr('title', gettext('Video speed: ') + this.state.speedToString(speed) + 'x');
         },
 
         /**
