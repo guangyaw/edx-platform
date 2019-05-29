@@ -25,6 +25,7 @@ from util.json_request import JsonResponse
 import json
 import re
 import requests
+from school_id_login.models import Xschools
 from school_id_login.models import Xsuser
 from django.contrib import auth
 from django.http import HttpResponse
@@ -75,8 +76,9 @@ def unidlink(request):
 
 @ensure_csrf_cookie
 def signin_nid(request):
+    xclient_id = Xschools.objects.get(xschool_id='FCU').xschool_client
     returnto = reverse('nretrun_nid')
-    return redirect('https://opendata.fcu.edu.tw/fcuOauth/Auth.aspx?client_id=636910339051.6e6173acc349473d81ea95d62c827e31.xhome.twshop.asia&client_url=http://xhome.twshop.asia'+returnto)
+    return redirect('https://opendata.fcu.edu.tw/fcuOauth/Auth.aspx?client_id='+xclient_id+'&client_url=http://xhome.twshop.asia'+returnto)
 
 
 @csrf_exempt
@@ -87,8 +89,9 @@ def return_nid(request):
 
     if int(request.POST['status']) == 200:
         # test
+        xclient_id = Xschools.objects.get(xschool_id='FCU').xschool_client
         getinfourl = 'https://opendata.fcu.edu.tw/fcuapi/api/GetUserInfo'
-        sdata = {"client_id": '636910339051.6e6173acc349473d81ea95d62c827e31.xhome.twshop.asia', "user_code": request.POST['user_code'] }
+        sdata = {"client_id": xclient_id, "user_code": request.POST['user_code'] }
         r = requests.get(getinfourl, params=sdata)
         if int(r.status_code) == 200:
             resp = json.loads(r.text)
