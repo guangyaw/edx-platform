@@ -2,11 +2,19 @@
 Fcu edx-platform Documentation
 ###############################
 
-
-
-
 Change History
 **************
+20190708:
+    1. Add return uri field
+    2. change the button style for fcu_nid
+    modified:
+    lms/djangoapps/school_id_login/models.py
+    lms/djangoapps/school_id_login/views.py
+    lms/static/sass/views/_login-register.scss
+    
+    Add:
+    lms/djangoapps/school_id_login/migrations/0003_xschools_return_uri.py
+
 20190417:
     1. Remove useless code
     2. Remove the --end
