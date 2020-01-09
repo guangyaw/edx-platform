@@ -374,7 +374,7 @@
                         //guangyaw modify for nid
                         if (this.options.title === '逢甲大學') {
                             this.redirect_to(this.options.disconnectUrl);
-                        } else if (this.options.title === '教育雲端帳號') {
+                        } else if (this.options.title === '教育雲端') {
                             this.redirect_to(this.options.disconnectUrl);
                         }else {
                             this.disconnect();

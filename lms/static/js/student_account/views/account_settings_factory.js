@@ -377,7 +377,7 @@
                         } else if(provider.name ==='OP_ID'){
                             return {
                                 view: new AccountSettingsFieldViews.AuthFieldView({
-                                    title: '教育雲端帳號',
+                                    title: '教育雲端',
                                     valueAttribute: 'auth-' + provider.id,
                                     helpMessage: '',
                                     connected: oid_bind_flag,
