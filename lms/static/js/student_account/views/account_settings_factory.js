@@ -28,6 +28,7 @@
             edxSupportUrl,
             extendedProfileFields,
             nid_bind_flag,//guangyaw modify for nid
+            oid_bind_flag,//guangyaw add for oid
             displayAccountDeletion,
             isSecondaryEmailFeatureEnabled
         ) {
@@ -373,7 +374,20 @@
                                     platformName: platformName
                                 })
                             };
-                        }else {
+                        } else if(provider.name ==='OP_ID'){
+                            return {
+                                view: new AccountSettingsFieldViews.AuthFieldView({
+                                    title: '教育雲端',
+                                    valueAttribute: 'auth-' + provider.id,
+                                    helpMessage: '',
+                                    connected: oid_bind_flag,
+                                    connectUrl: "https://courses.openedu.tw/oidlogin",
+                                    acceptsLogins: provider.accepts_logins,
+                                    disconnectUrl: "https://courses.openedu.tw/unlink_oid",
+                                    platformName: platformName
+                                })
+                            };
+                        } else {
                             return {
                                 view: new AccountSettingsFieldViews.AuthFieldView({
                                     title: provider.name,
