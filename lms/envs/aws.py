@@ -823,7 +823,7 @@ ECOMMERCE_SERVICE_WORKER_USERNAME = ENV_TOKENS.get(
 
 
 ##### guangyaw add school id login #####
-INSTALLED_APPS.append('school_id_login')
+#INSTALLED_APPS.append('school_id_login')
 
 ##### Custom Courses for EdX #####
 if FEATURES.get('CUSTOM_COURSES_EDX'):
