@@ -1,31 +1,32 @@
 """
 Tests the execution of forum notification tasks.
 """
-from datetime import datetime, timedelta
+
+
 import json
 import math
+from datetime import datetime, timedelta
 
 import ddt
-from django.contrib.sites.models import Site
 import mock
-
-import lms.lib.comment_client as cc
-
-from django_comment_common.models import ForumsConfig
-from django_comment_common.signals import comment_created
+import six
+from django.contrib.sites.models import Site
+from edx_ace.channel import ChannelType, get_channel_for_message
 from edx_ace.recipient import Recipient
 from edx_ace.renderers import EmailRenderer
-from edx_ace.channel import ChannelType, get_channel_for_message
 from edx_ace.utils import date
+
+import openedx.core.djangoapps.django_comment_common.comment_client as cc
 from lms.djangoapps.discussion.signals.handlers import ENABLE_FORUM_NOTIFICATIONS_FOR_SITE_KEY
 from lms.djangoapps.discussion.tasks import _should_send_message, _track_notification_sent
-from openedx.core.djangoapps.content.course_overviews.tests.factories import CourseOverviewFactory
 from openedx.core.djangoapps.ace_common.template_context import get_base_template_context
+from openedx.core.djangoapps.content.course_overviews.tests.factories import CourseOverviewFactory
+from openedx.core.djangoapps.django_comment_common.models import ForumsConfig
+from openedx.core.djangoapps.django_comment_common.signals import comment_created
 from openedx.core.djangoapps.site_configuration.tests.factories import SiteConfigurationFactory
 from openedx.core.lib.celery.task_utils import emulate_http_request
 from student.tests.factories import CourseEnrollmentFactory, UserFactory
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
-
 
 NOW = datetime.utcnow()
 ONE_HOUR_AGO = NOW - timedelta(hours=1)
@@ -108,7 +109,7 @@ class TaskTestCase(ModuleStoreTestCase):
     def create_thread_and_comments(cls):
         cls.thread = {
             'id': cls.discussion_id,
-            'course_id': unicode(cls.course.id),
+            'course_id': six.text_type(cls.course.id),
             'created_at': date.serialize(TWO_HOURS_AGO),
             'title': 'thread-title',
             'user_id': cls.thread_author.id,
@@ -146,7 +147,7 @@ class TaskTestCase(ModuleStoreTestCase):
         cls.comment['child_count'] = 1
         cls.thread2 = {
             'id': cls.discussion_id,
-            'course_id': unicode(cls.course.id),
+            'course_id': six.text_type(cls.course.id),
             'created_at': date.serialize(TWO_HOURS_AGO),
             'title': 'thread-title',
             'user_id': cls.thread_author.id,
@@ -192,7 +193,7 @@ class TaskTestCase(ModuleStoreTestCase):
         comment = cc.Comment.find(id=self.comment['id']).retrieve()
         site = Site.objects.get_current()
         site_config = SiteConfigurationFactory.create(site=site)
-        site_config.values[ENABLE_FORUM_NOTIFICATIONS_FOR_SITE_KEY] = True
+        site_config.site_values[ENABLE_FORUM_NOTIFICATIONS_FOR_SITE_KEY] = True
         site_config.save()
         with mock.patch('lms.djangoapps.discussion.signals.handlers.get_current_site', return_value=site):
             comment_created.send(sender=None, user=user, post=comment)
@@ -231,7 +232,6 @@ class TaskTestCase(ModuleStoreTestCase):
         with emulate_http_request(
             site=message.context['site'], user=self.thread_author
         ):
-            # pylint: disable=unsupported-membership-test
             rendered_email = EmailRenderer().render(get_channel_for_message(ChannelType.EMAIL, message), message)
             assert self.comment['body'] in rendered_email.body_html
             assert self.comment_author.username in rendered_email.body_html

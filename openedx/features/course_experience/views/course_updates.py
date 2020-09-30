@@ -1,23 +1,24 @@
 """
 Views that handle course updates.
 """
+
+
 from datetime import datetime
 
+import six
 from django.contrib.auth.decorators import login_required
 from django.template.context_processors import csrf
-from django.urls import reverse
 from django.template.loader import render_to_string
+from django.urls import reverse
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_control
 from opaque_keys.edx.keys import CourseKey
 from web_fragments.fragment import Fragment
 
-from courseware.courses import get_course_info_section_module, get_course_with_access
+from lms.djangoapps.courseware.courses import get_course_info_section_module, get_course_with_access
 from lms.djangoapps.courseware.views.views import CourseTabView
 from openedx.core.djangoapps.plugin_api.views import EdxFragmentView
 from openedx.features.course_experience import default_course_url_name
-
-from .. import USE_BOOTSTRAP_FLAG
 
 STATUS_VISIBLE = 'visible'
 STATUS_DELETED = 'deleted'
@@ -63,14 +64,8 @@ class CourseUpdatesView(CourseTabView):
         """
         return super(CourseUpdatesView, self).get(request, course_id, 'courseware', **kwargs)
 
-    def uses_bootstrap(self, request, course, tab):
-        """
-        Returns true if the USE_BOOTSTRAP Waffle flag is enabled.
-        """
-        return USE_BOOTSTRAP_FLAG.is_enabled(course.id)
-
     def render_to_fragment(self, request, course=None, tab=None, **kwargs):
-        course_id = unicode(course.id)
+        course_id = six.text_type(course.id)
         updates_fragment_view = CourseUpdatesFragmentView()
         return updates_fragment_view.render_to_fragment(request, course_id=course_id, **kwargs)
 
@@ -79,6 +74,7 @@ class CourseUpdatesFragmentView(EdxFragmentView):
     """
     A fragment to render the updates page for a course.
     """
+
     def render_to_fragment(self, request, course_id=None, **kwargs):
         """
         Renders the course's home page as a fragment.
@@ -86,7 +82,7 @@ class CourseUpdatesFragmentView(EdxFragmentView):
         course_key = CourseKey.from_string(course_id)
         course = get_course_with_access(request.user, 'load', course_key, check_if_enrolled=True)
         course_url_name = default_course_url_name(course.id)
-        course_url = reverse(course_url_name, kwargs={'course_id': unicode(course.id)})
+        course_url = reverse(course_url_name, kwargs={'course_id': six.text_type(course.id)})
 
         ordered_updates = get_ordered_updates(request, course)
         plain_html_updates = ''
@@ -101,7 +97,6 @@ class CourseUpdatesFragmentView(EdxFragmentView):
             'updates': ordered_updates,
             'plain_html_updates': plain_html_updates,
             'disable_courseware_js': True,
-            'uses_pattern_library': True,
         }
         html = render_to_string('course_experience/course-updates-fragment.html', context)
         return Fragment(html)

@@ -1,6 +1,10 @@
 """
 Test helpers for testing course block transformers.
 """
+
+
+import six
+from six.moves import range
 from mock import patch
 
 from course_modes.models import CourseMode
@@ -73,7 +77,7 @@ class CourseStructureTestCase(TransformerRegistryTestMixin, ModuleStoreTestCase)
         block_type = block_hierarchy['#type']
         block_ref = block_hierarchy['#ref']
         factory = (CourseFactory if block_type == 'course' else ItemFactory)
-        kwargs = {key: value for key, value in block_hierarchy.iteritems() if key[0] != '#'}
+        kwargs = {key: value for key, value in six.iteritems(block_hierarchy) if key[0] != '#'}
 
         if block_type != 'course':
             kwargs['category'] = block_type
@@ -320,7 +324,7 @@ class BlockParentsMapTestCase(TransformerRegistryTestMixin, ModuleStoreTestCase)
             block_structure_result = xblock_key in block_structure
 
             # compare with expected value
-            self.assertEquals(
+            self.assertEqual(
                 block_structure_result,
                 i in expected_accessible_blocks,
                 u"block_structure return value {0} not equal to expected value for block {1} for user {2}".format(
@@ -340,7 +344,7 @@ class BlockParentsMapTestCase(TransformerRegistryTestMixin, ModuleStoreTestCase)
                         )
                     )
                 else:
-                    self.assertEquals(
+                    self.assertEqual(
                         block_structure_result,
                         has_access_result,
                         u"block structure ({0}) & has_access ({1}) results not equal for block {2} for user {3}".format(

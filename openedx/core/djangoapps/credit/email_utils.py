@@ -2,17 +2,15 @@
 This file contains utility functions which will responsible for sending emails.
 """
 
-from __future__ import absolute_import
 
 import logging
 import os
 import uuid
+import html
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 
 import six
-import six.moves.html_parser  # pylint: disable=import-error
-import six.moves.urllib.parse  # pylint: disable=import-error
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.contrib.staticfiles import finders
@@ -109,8 +107,7 @@ def send_credit_notifications(username, course_key):
                 cur_text = cur_file.read()
                 # use html parser to unescape html characters which are changed
                 # by the 'pynliner' while adding inline css to html content
-                html_parser = six.moves.html_parser.HTMLParser()
-                email_body_content = html_parser.unescape(with_inline_css(cur_text))
+                email_body_content = html.unescape(with_inline_css(cur_text))
                 # cache the email body content before rendering it since the
                 # email context will change for each user e.g., 'full_name'
                 cache.set('credit.email.css-email-body', email_body_content, settings.CREDIT_NOTIFICATION_CACHE_TIMEOUT)
@@ -171,7 +168,7 @@ def attach_image(img_dict, filename):
     if img_path:
         with open(img_path, 'rb') as img:
             msg_image = MIMEImage(img.read(), name=os.path.basename(img_path))
-            msg_image.add_header('Content-ID', b'<{}>'.format(img_dict['cid']))  # xss-lint: disable=python-wrap-html
+            msg_image.add_header('Content-ID', '<{}>'.format(img_dict['cid']))  # xss-lint: disable=python-wrap-html
             msg_image.add_header("Content-Disposition", "inline", filename=filename)
         return msg_image
 

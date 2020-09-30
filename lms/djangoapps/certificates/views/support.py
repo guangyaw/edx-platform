@@ -4,11 +4,13 @@ Certificate end-points used by the student support UI.
 See lms/djangoapps/support for more details.
 
 """
-import bleach
+
+
 import logging
-import urllib
 from functools import wraps
 
+import bleach
+import six
 from django.db import transaction
 from django.db.models import Q
 from django.http import HttpResponse, HttpResponseBadRequest, HttpResponseForbidden, HttpResponseServerError
@@ -19,7 +21,7 @@ from opaque_keys.edx.keys import CourseKey
 
 from lms.djangoapps.certificates import api
 from lms.djangoapps.certificates.models import CertificateInvalidation
-from courseware.access import has_access
+from lms.djangoapps.certificates.permissions import GENERATE_ALL_CERTIFICATES, VIEW_ALL_CERTIFICATES
 from lms.djangoapps.instructor_task.api import generate_certificates_for_students
 from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
 from student.models import CourseEnrollment, User
@@ -29,22 +31,28 @@ from xmodule.modulestore.django import modulestore
 log = logging.getLogger(__name__)
 
 
-def require_certificate_permission(func):
+def require_certificate_permission(permission):
     """
     View decorator that requires permission to view and regenerate certificates.
     """
-    @wraps(func)
-    def inner(request, *args, **kwargs):
-        if has_access(request.user, "certificates", "global"):
-            return func(request, *args, **kwargs)
-        else:
+    def inner(func):
+        """
+        The outer wrapper, used to allow the decorator to take optional arguments.
+        """
+        @wraps(func)
+        def wrapper(request, *args, **kwargs):
+            """
+            The inner wrapper, which wraps the view function.
+            """
+            if request.user.has_perm(permission, 'global'):
+                return func(request, *args, **kwargs)
             return HttpResponseForbidden()
-
+        return wrapper
     return inner
 
 
 @require_GET
-@require_certificate_permission
+@require_certificate_permission(VIEW_ALL_CERTIFICATES)
 def search_certificates(request):
     """
     Search for certificates for a particular user OR along with the given course.
@@ -81,7 +89,8 @@ def search_certificates(request):
         ]
 
     """
-    user_filter = bleach.clean(urllib.unquote(urllib.quote_plus(request.GET.get("user", ""))))
+    unbleached_filter = six.moves.urllib.parse.unquote(six.moves.urllib.parse.quote_plus(request.GET.get("user", "")))
+    user_filter = bleach.clean(unbleached_filter)
     if not user_filter:
         msg = _("user is not given.")
         return HttpResponseBadRequest(msg)
@@ -93,12 +102,12 @@ def search_certificates(request):
 
     certificates = api.get_certificates_for_user(user.username)
     for cert in certificates:
-        cert["course_key"] = unicode(cert["course_key"])
+        cert["course_key"] = six.text_type(cert["course_key"])
         cert["created"] = cert["created"].isoformat()
         cert["modified"] = cert["modified"].isoformat()
         cert["regenerate"] = not cert['is_pdf_certificate']
 
-    course_id = urllib.quote_plus(request.GET.get("course_id", ""), safe=':/')
+    course_id = six.moves.urllib.parse.quote_plus(request.GET.get("course_id", ""), safe=':/')
     if course_id:
         try:
             course_key = CourseKey.from_string(course_id)
@@ -149,7 +158,7 @@ def _validate_post_params(params):
 # Grades can potentially be written - if so, let grading manage the transaction.
 @transaction.non_atomic_requests
 @require_POST
-@require_certificate_permission
+@require_certificate_permission(GENERATE_ALL_CERTIFICATES)
 def regenerate_certificate_for_user(request):
     """
     Regenerate certificates for a user.
@@ -216,7 +225,7 @@ def regenerate_certificate_for_user(request):
 
 @transaction.non_atomic_requests
 @require_POST
-@require_certificate_permission
+@require_certificate_permission(GENERATE_ALL_CERTIFICATES)
 def generate_certificate_for_user(request):
     """
     Generate certificates for a user.

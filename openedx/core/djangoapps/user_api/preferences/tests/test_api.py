@@ -2,40 +2,41 @@
 """
 Unit tests for preference APIs.
 """
-import datetime
-import ddt
-from mock import patch
-from pytz import common_timezones, utc
 
+
+import datetime
+
+import ddt
+from dateutil.parser import parse as parse_datetime
 from django.contrib.auth.models import User
 from django.test.utils import override_settings
-from dateutil.parser import parse as parse_datetime
+from django.urls import reverse
+from mock import patch
+from pytz import common_timezones, utc
 
 from openedx.core.djangolib.testing.utils import CacheIsolationTestCase, skip_unless_lms
 from openedx.core.lib.time_zone_utils import get_display_time_zone
 from student.models import UserProfile
 from student.tests.factories import UserFactory
-
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
 
-from ...accounts.api import create_account
 from ...errors import (
-    UserNotFound,
-    UserNotAuthorized,
-    PreferenceValidationError,
-    PreferenceUpdateError,
     CountryCodeError,
+    PreferenceUpdateError,
+    PreferenceValidationError,
+    UserNotAuthorized,
+    UserNotFound
 )
 from ...models import UserOrgTag
 from ...preferences.api import (
+    delete_user_preference,
+    get_country_time_zones,
     get_user_preference,
     get_user_preferences,
     set_user_preference,
-    update_user_preferences,
-    delete_user_preference,
     update_email_opt_in,
-    get_country_time_zones,
+    update_user_preferences
 )
 
 
@@ -139,7 +140,7 @@ class TestPreferenceAPI(CacheIsolationTestCase):
         with self.assertRaises(PreferenceValidationError) as context_manager:
             set_user_preference(self.user, too_long_key, "new_value")
         errors = context_manager.exception.preference_errors
-        self.assertEqual(len(errors.keys()), 1)
+        self.assertEqual(len(list(errors.keys())), 1)
         self.assertEqual(
             errors[too_long_key],
             {
@@ -152,7 +153,7 @@ class TestPreferenceAPI(CacheIsolationTestCase):
             with self.assertRaises(PreferenceValidationError) as context_manager:
                 set_user_preference(self.user, self.test_preference_key, empty_value)
             errors = context_manager.exception.preference_errors
-            self.assertEqual(len(errors.keys()), 1)
+            self.assertEqual(len(list(errors.keys())), 1)
             self.assertEqual(
                 errors[self.test_preference_key],
                 {
@@ -241,7 +242,7 @@ class TestPreferenceAPI(CacheIsolationTestCase):
         with self.assertRaises(PreferenceValidationError) as context_manager:
             update_user_preferences(self.user, {too_long_key: "new_value"})
         errors = context_manager.exception.preference_errors
-        self.assertEqual(len(errors.keys()), 1)
+        self.assertEqual(len(list(errors.keys())), 1)
         self.assertEqual(
             errors[too_long_key],
             {
@@ -254,7 +255,7 @@ class TestPreferenceAPI(CacheIsolationTestCase):
             with self.assertRaises(PreferenceValidationError) as context_manager:
                 update_user_preferences(self.user, {self.test_preference_key: empty_value})
             errors = context_manager.exception.preference_errors
-            self.assertEqual(len(errors.keys()), 1)
+            self.assertEqual(len(list(errors.keys())), 1)
             self.assertEqual(
                 errors[self.test_preference_key],
                 {
@@ -335,6 +336,18 @@ class UpdateEmailOptInTests(ModuleStoreTestCase):
     PASSWORD = u'ṕáśśẃőŕd'
     EMAIL = u'claire+underwood@example.com'
 
+    def _create_account(self, username, password, email):
+        # pylint: disable=missing-docstring
+        registration_url = reverse('user_api_registration')
+        resp = self.client.post(registration_url, {
+            'username': username,
+            'email': email,
+            'password': password,
+            'name': username,
+            'honor_code': 'true',
+        })
+        self.assertEqual(resp.status_code, 200)
+
     @ddt.data(
         # Check that a 27 year old can opt-in
         (27, True, u"True"),
@@ -356,7 +369,7 @@ class UpdateEmailOptInTests(ModuleStoreTestCase):
     def test_update_email_optin(self, age, option, expected_result):
         # Create the course and account.
         course = CourseFactory.create()
-        create_account(self.USERNAME, self.PASSWORD, self.EMAIL)
+        self._create_account(self.USERNAME, self.PASSWORD, self.EMAIL)
 
         # Set year of birth
         user = User.objects.get(username=self.USERNAME)
@@ -373,7 +386,7 @@ class UpdateEmailOptInTests(ModuleStoreTestCase):
         # Test that the API still works if no age is specified.
         # Create the course and account.
         course = CourseFactory.create()
-        create_account(self.USERNAME, self.PASSWORD, self.EMAIL)
+        self._create_account(self.USERNAME, self.PASSWORD, self.EMAIL)
 
         user = User.objects.get(username=self.USERNAME)
 
@@ -406,7 +419,7 @@ class UpdateEmailOptInTests(ModuleStoreTestCase):
     def test_change_email_optin(self, age, option, second_option, expected_result):
         # Create the course and account.
         course = CourseFactory.create()
-        create_account(self.USERNAME, self.PASSWORD, self.EMAIL)
+        self._create_account(self.USERNAME, self.PASSWORD, self.EMAIL)
 
         # Set year of birth
         user = User.objects.get(username=self.USERNAME)
@@ -469,7 +482,7 @@ def get_expected_validation_developer_message(preference_key, preference_value):
         preference_key=preference_key,
         preference_value=preference_value,
         error={
-            "key": [u"Ensure this value has at most 255 characters (it has 256)."]
+            "key": [u"Ensure this field has no more than 255 characters."]
         }
     )
 

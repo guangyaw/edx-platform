@@ -1,6 +1,8 @@
 """
 Tests for SplitTestTransformer.
 """
+
+
 import ddt
 
 import openedx.core.djangoapps.user_api.course_tag.api as course_tag_api
@@ -205,7 +207,7 @@ class SplitTestTransformerTestCase(CourseStructureTestCase):
         user_groups = get_user_partition_groups(
             self.course.id, [self.split_test_user_partition], self.user, 'id'
         )
-        self.assertEquals(len(user_groups), 1)
+        self.assertEqual(len(user_groups), 1)
 
         # calling twice should result in the same block set
         block_structure1 = get_course_blocks(

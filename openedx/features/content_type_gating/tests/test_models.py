@@ -1,13 +1,16 @@
-from datetime import timedelta, datetime
+
+
 import itertools
+from datetime import datetime, timedelta
 
 import ddt
-from django.utils import timezone
-from mock import Mock
 import pytz
-
+from django.utils import timezone
 from edx_django_utils.cache import RequestCache
+from mock import Mock
 from opaque_keys.edx.locator import CourseLocator
+
+from course_modes.tests.factories import CourseModeFactory
 from openedx.core.djangoapps.config_model_utils.models import Provenance
 from openedx.core.djangoapps.content.course_overviews.tests.factories import CourseOverviewFactory
 from openedx.core.djangoapps.site_configuration.tests.factories import SiteConfigurationFactory
@@ -24,22 +27,21 @@ class TestContentTypeGatingConfig(CacheIsolationTestCase):
 
     def setUp(self):
         self.course_overview = CourseOverviewFactory.create()
+        CourseModeFactory.create(course_id=self.course_overview.id, mode_slug='audit')
+        CourseModeFactory.create(course_id=self.course_overview.id, mode_slug='verified')
         self.user = UserFactory.create()
         super(TestContentTypeGatingConfig, self).setUp()
 
     @ddt.data(
-        (True, True, True),
-        (True, True, False),
-        (True, False, True),
-        (True, False, False),
-        (False, False, True),
-        (False, False, False),
+        (True, True),
+        (True, False),
+        (False, True),
+        (False, False),
     )
     @ddt.unpack
     def test_enabled_for_enrollment(
         self,
         already_enrolled,
-        pass_enrollment,
         enrolled_before_enabled,
     ):
 
@@ -64,22 +66,14 @@ class TestContentTypeGatingConfig(CacheIsolationTestCase):
         else:
             existing_enrollment = None
 
-        if pass_enrollment:
-            enrollment = existing_enrollment
-            user = None
-            course_key = None
-        else:
-            enrollment = None
-            user = self.user
-            course_key = self.course_overview.id
+        enrollment = None
+        user = self.user
+        course_key = self.course_overview.id
 
-        query_count = 6
-        if not already_enrolled or not pass_enrollment and already_enrolled:
-            query_count = 7
+        query_count = 7
 
         with self.assertNumQueries(query_count):
             enabled = ContentTypeGatingConfig.enabled_for_enrollment(
-                enrollment=enrollment,
                 user=user,
                 course_key=course_key,
             )
@@ -87,11 +81,11 @@ class TestContentTypeGatingConfig(CacheIsolationTestCase):
 
     def test_enabled_for_enrollment_failure(self):
         with self.assertRaises(ValueError):
-            ContentTypeGatingConfig.enabled_for_enrollment(None, None, None)
+            ContentTypeGatingConfig.enabled_for_enrollment(None, None)
         with self.assertRaises(ValueError):
-            ContentTypeGatingConfig.enabled_for_enrollment(Mock(name='enrollment'), Mock(name='user'), None)
+            ContentTypeGatingConfig.enabled_for_enrollment(Mock(name='user'), None)
         with self.assertRaises(ValueError):
-            ContentTypeGatingConfig.enabled_for_enrollment(Mock(name='enrollment'), None, Mock(name='course_key'))
+            ContentTypeGatingConfig.enabled_for_enrollment(None, Mock(name='course_key'))
 
     @ddt.data(True, False)
     def test_enabled_for_course(
@@ -137,8 +131,12 @@ class TestContentTypeGatingConfig(CacheIsolationTestCase):
         # there are no leaks of configuration across contexts
         non_test_course_enabled = CourseOverviewFactory.create(org='non-test-org-enabled')
         non_test_course_disabled = CourseOverviewFactory.create(org='non-test-org-disabled')
-        non_test_site_cfg_enabled = SiteConfigurationFactory.create(values={'course_org_filter': non_test_course_enabled.org})
-        non_test_site_cfg_disabled = SiteConfigurationFactory.create(values={'course_org_filter': non_test_course_disabled.org})
+        non_test_site_cfg_enabled = SiteConfigurationFactory.create(
+            site_values={'course_org_filter': non_test_course_enabled.org}
+        )
+        non_test_site_cfg_disabled = SiteConfigurationFactory.create(
+            site_values={'course_org_filter': non_test_course_disabled.org}
+        )
 
         ContentTypeGatingConfig.objects.create(course=non_test_course_enabled, enabled=True, enabled_as_of=datetime(2018, 1, 1))
         ContentTypeGatingConfig.objects.create(course=non_test_course_disabled, enabled=False)
@@ -149,7 +147,9 @@ class TestContentTypeGatingConfig(CacheIsolationTestCase):
 
         # Set up test objects
         test_course = CourseOverviewFactory.create(org='test-org')
-        test_site_cfg = SiteConfigurationFactory.create(values={'course_org_filter': test_course.org})
+        test_site_cfg = SiteConfigurationFactory.create(
+            site_values={'course_org_filter': test_course.org}
+        )
 
         ContentTypeGatingConfig.objects.create(enabled=global_setting, enabled_as_of=datetime(2018, 1, 1))
         ContentTypeGatingConfig.objects.create(course=test_course, enabled=course_setting, enabled_as_of=datetime(2018, 1, 1))
@@ -172,12 +172,14 @@ class TestContentTypeGatingConfig(CacheIsolationTestCase):
         for global_setting in (True, False, None):
             ContentTypeGatingConfig.objects.create(enabled=global_setting, enabled_as_of=datetime(2018, 1, 1))
             for site_setting in (True, False, None):
-                test_site_cfg = SiteConfigurationFactory.create(values={'course_org_filter': []})
+                test_site_cfg = SiteConfigurationFactory.create(
+                    site_values={'course_org_filter': []}
+                )
                 ContentTypeGatingConfig.objects.create(site=test_site_cfg.site, enabled=site_setting, enabled_as_of=datetime(2018, 1, 1))
 
                 for org_setting in (True, False, None):
                     test_org = "{}-{}".format(test_site_cfg.id, org_setting)
-                    test_site_cfg.values['course_org_filter'].append(test_org)
+                    test_site_cfg.site_values['course_org_filter'].append(test_org)
                     test_site_cfg.save()
 
                     ContentTypeGatingConfig.objects.create(org=test_org, enabled=org_setting, enabled_as_of=datetime(2018, 1, 1))
@@ -202,7 +204,7 @@ class TestContentTypeGatingConfig(CacheIsolationTestCase):
             all_configs[CourseLocator('7-True', 'test_course', 'run-None')],
             {
                 'enabled': (True, Provenance.org),
-                'enabled_as_of': (datetime(2018, 1, 1, 5, tzinfo=pytz.UTC), Provenance.run),
+                'enabled_as_of': (datetime(2018, 1, 1, 0, tzinfo=pytz.UTC), Provenance.run),
                 'studio_override_enabled': (None, Provenance.default),
             }
         )
@@ -210,7 +212,7 @@ class TestContentTypeGatingConfig(CacheIsolationTestCase):
             all_configs[CourseLocator('7-True', 'test_course', 'run-False')],
             {
                 'enabled': (False, Provenance.run),
-                'enabled_as_of': (datetime(2018, 1, 1, 5, tzinfo=pytz.UTC), Provenance.run),
+                'enabled_as_of': (datetime(2018, 1, 1, 0, tzinfo=pytz.UTC), Provenance.run),
                 'studio_override_enabled': (None, Provenance.default),
             }
         )
@@ -218,7 +220,7 @@ class TestContentTypeGatingConfig(CacheIsolationTestCase):
             all_configs[CourseLocator('7-None', 'test_course', 'run-None')],
             {
                 'enabled': (True, Provenance.site),
-                'enabled_as_of': (datetime(2018, 1, 1, 5, tzinfo=pytz.UTC), Provenance.run),
+                'enabled_as_of': (datetime(2018, 1, 1, 0, tzinfo=pytz.UTC), Provenance.run),
                 'studio_override_enabled': (None, Provenance.default),
             }
         )
@@ -285,7 +287,9 @@ class TestContentTypeGatingConfig(CacheIsolationTestCase):
 
     def test_caching_org(self):
         course = CourseOverviewFactory.create(org='test-org')
-        site_cfg = SiteConfigurationFactory.create(values={'course_org_filter': course.org})
+        site_cfg = SiteConfigurationFactory.create(
+            site_values={'course_org_filter': course.org}
+        )
         org_config = ContentTypeGatingConfig(org=course.org, enabled=True, enabled_as_of=datetime(2018, 1, 1))
         org_config.save()
 
@@ -330,7 +334,9 @@ class TestContentTypeGatingConfig(CacheIsolationTestCase):
 
     def test_caching_course(self):
         course = CourseOverviewFactory.create(org='test-org')
-        site_cfg = SiteConfigurationFactory.create(values={'course_org_filter': course.org})
+        site_cfg = SiteConfigurationFactory.create(
+            site_values={'course_org_filter': course.org}
+        )
         course_config = ContentTypeGatingConfig(course=course, enabled=True, enabled_as_of=datetime(2018, 1, 1))
         course_config.save()
 

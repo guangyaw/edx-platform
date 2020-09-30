@@ -2,11 +2,11 @@
 Test utilities for OAuth access token exchange
 """
 
+
 from django.conf import settings
-from social_django.models import UserSocialAuth, Partial
+from social_django.models import Partial, UserSocialAuth
 
 from third_party_auth.tests.utils import ThirdPartyOAuthTestMixin
-
 
 TPA_FEATURES_KEY = 'ENABLE_THIRD_PARTY_AUTH'
 TPA_FEATURE_ENABLED = TPA_FEATURES_KEY in settings.FEATURES
@@ -77,7 +77,7 @@ class AccessTokenExchangeTestMixin(ThirdPartyOAuthTestMixin):
         self._assert_error(
             self.data,
             "invalid_client",
-            u"{}_confidential is not a public client".format(self.client_id),
+            "{}_confidential is not a public client".format(self.client_id),
         )
 
     def test_inactive_user(self):

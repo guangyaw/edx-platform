@@ -1,24 +1,26 @@
 # -*- coding: utf-8 -*-
 """ Tests for student profile views. """
 
+
 import datetime
+
 import ddt
 import mock
-
-from django.test import override_settings
-
-from lms.djangoapps.certificates.tests.factories import GeneratedCertificateFactory
-from lms.djangoapps.certificates.api import is_passing_status
-from lms.envs.test import CREDENTIALS_PUBLIC_SERVICE_URL
-from course_modes.models import CourseMode
 from django.conf import settings
-from django.urls import reverse
+from django.test import override_settings
 from django.test.client import RequestFactory
+from django.urls import reverse
 from opaque_keys.edx.locator import CourseLocator
-from openedx.features.learner_profile import REDIRECT_TO_PROFILE_MICROFRONTEND
-from openedx.features.learner_profile.views.learner_profile import learner_profile_context
+
+from course_modes.models import CourseMode
+from lms.djangoapps.certificates.api import is_passing_status
+from lms.djangoapps.certificates.tests.factories import GeneratedCertificateFactory
+from lms.envs.test import CREDENTIALS_PUBLIC_SERVICE_URL
+from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
 from openedx.core.djangoapps.site_configuration.tests.mixins import SiteMixin
 from openedx.core.djangoapps.waffle_utils.testutils import override_waffle_flag
+from openedx.features.learner_profile.toggles import REDIRECT_TO_PROFILE_MICROFRONTEND
+from openedx.features.learner_profile.views.learner_profile import learner_profile_context
 from student.tests.factories import CourseEnrollmentFactory, UserFactory
 from util.testing import UrlResetMixin
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
@@ -114,28 +116,27 @@ class LearnerProfileViewTest(SiteMixin, UrlResetMixin, ModuleStoreTestCase):
         response = self.client.get(path=profile_path)
 
         for attribute in self.CONTEXT_DATA:
-            self.assertIn(attribute, response.content)
+            self.assertContains(response, attribute)
 
     def test_redirect_view(self):
-        profile_url = "http://profile-spa/abc/"
-        with override_settings(PROFILE_MICROFRONTEND_URL=profile_url):
-            with override_waffle_flag(REDIRECT_TO_PROFILE_MICROFRONTEND, active=True):
-                profile_path = reverse('learner_profile', kwargs={'username': self.USERNAME})
+        with override_waffle_flag(REDIRECT_TO_PROFILE_MICROFRONTEND, active=True):
+            profile_path = reverse('learner_profile', kwargs={'username': self.USERNAME})
 
-                # Test with waffle flag active, site setting disabled
-                response = self.client.get(path=profile_path)
-                for attribute in self.CONTEXT_DATA:
-                    self.assertIn(attribute, response.content)
+            # Test with waffle flag active and site setting disabled, does not redirect
+            response = self.client.get(path=profile_path)
+            for attribute in self.CONTEXT_DATA:
+                self.assertContains(response, attribute)
 
-                # Test with waffle flag active, site setting enabled
-                site_domain = 'othersite.example.com'
-                self.set_up_site(site_domain, {
-                    'SITE_NAME': site_domain,
-                    'ENABLE_PROFILE_MICROFRONTEND': True
-                })
-                self.client.login(username=self.USERNAME, password=self.PASSWORD)
-                response = self.client.get(path=profile_path)
-                self.assertRedirects(response, profile_url + self.USERNAME, target_status_code=404)
+            # Test with waffle flag active and site setting enabled, redirects to microfrontend
+            site_domain = 'othersite.example.com'
+            self.set_up_site(site_domain, {
+                'SITE_NAME': site_domain,
+                'ENABLE_PROFILE_MICROFRONTEND': True
+            })
+            self.client.login(username=self.USERNAME, password=self.PASSWORD)
+            response = self.client.get(path=profile_path)
+            profile_url = settings.PROFILE_MICROFRONTEND_URL
+            self.assertRedirects(response, profile_url + self.USERNAME, fetch_redirect_response=False)
 
     def test_records_link(self):
         profile_path = reverse('learner_profile', kwargs={'username': self.USERNAME})
@@ -248,3 +249,49 @@ class LearnerProfileViewTest(SiteMixin, UrlResetMixin, ModuleStoreTestCase):
         response = self.client.get('/u/{username}'.format(username=self.user.username))
 
         self.assertNotContains(response, u'card certificate-card mode-{cert_mode}'.format(cert_mode=cert.mode))
+
+    def test_certificates_visible_only_for_staff_and_profile_user(self):
+        """
+        Verify that certificates data are passed to template only in case of staff user
+        and profile user.
+        """
+        request = RequestFactory().get('/url')
+        request.user = self.user
+        profile_username = self.other_user.username
+        user_is_staff = True
+        context = learner_profile_context(request, profile_username, user_is_staff)
+
+        self.assertIn('achievements_fragment', context)
+
+        user_is_staff = False
+        context = learner_profile_context(request, profile_username, user_is_staff)
+        self.assertNotIn('achievements_fragment', context)
+
+        profile_username = self.user.username
+        context = learner_profile_context(request, profile_username, user_is_staff)
+        self.assertIn('achievements_fragment', context)
+
+    @mock.patch.dict(settings.FEATURES, {'CERTIFICATES_HTML_VIEW': True})
+    def test_certificate_visibility_with_no_cert_config(self):
+        """
+        Verify that certificates are not displayed until there is an active
+        certificate configuration.
+        """
+        # Add new certificate
+        cert = self._create_certificate(enrollment_mode=CourseMode.VERIFIED)
+        cert.download_url = ''
+        cert.save()
+
+        response = self.client.get('/u/{username}'.format(username=self.user.username))
+        self.assertNotContains(
+            response, u'card certificate-card mode-{cert_mode}'.format(cert_mode=CourseMode.VERIFIED)
+        )
+
+        course_overview = CourseOverview.get_from_id(self.course.id)
+        course_overview.has_any_active_web_certificate = True
+        course_overview.save()
+
+        response = self.client.get('/u/{username}'.format(username=self.user.username))
+        self.assertContains(
+            response, u'card certificate-card mode-{cert_mode}'.format(cert_mode=CourseMode.VERIFIED)
+        )

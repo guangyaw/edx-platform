@@ -1,15 +1,18 @@
 # -*- coding: utf-8 -*-
 """Helper functions for working with Programs."""
+
+
 import datetime
 import logging
 from collections import defaultdict
 from copy import deepcopy
 from itertools import chain
-from urlparse import urljoin, urlparse, urlunparse
 
+import six
 from dateutil.parser import parse
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.contrib.sites.models import Site
 from django.core.cache import cache
 from django.urls import reverse
 from django.utils.functional import cached_property
@@ -17,19 +20,26 @@ from edx_rest_api_client.exceptions import SlumberBaseException
 from opaque_keys.edx.keys import CourseKey
 from pytz import utc
 from requests.exceptions import ConnectionError, Timeout
+from six.moves.urllib.parse import urljoin, urlparse, urlunparse  # pylint: disable=import-error
 
+from course_modes.api import get_paid_modes_for_course
 from course_modes.models import CourseMode
+from entitlements.api import get_active_entitlement_list_for_user
 from entitlements.models import CourseEntitlement
 from lms.djangoapps.certificates import api as certificate_api
 from lms.djangoapps.certificates.models import GeneratedCertificate
 from lms.djangoapps.commerce.utils import EcommerceService
-from lms.djangoapps.courseware.access import has_access
-from lms.djangoapps.grades.course_grade_factory import CourseGradeFactory
-from openedx.core.djangoapps.catalog.utils import get_programs, get_fulfillable_course_runs_for_entitlement
+from openedx.core.djangoapps.catalog.api import get_programs_by_type
+from openedx.core.djangoapps.catalog.utils import (
+    get_fulfillable_course_runs_for_entitlement,
+    get_programs,
+)
 from openedx.core.djangoapps.certificates.api import available_date_for_certificate
 from openedx.core.djangoapps.commerce.utils import ecommerce_api_client
 from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
 from openedx.core.djangoapps.credentials.utils import get_credentials
+from openedx.core.djangoapps.enrollments.api import get_enrollments
+from openedx.core.djangoapps.enrollments.permissions import ENROLL_IN_COURSE
 from openedx.core.djangoapps.programs import ALWAYS_CALCULATE_PROGRAM_PRICE_AS_ANONYMOUS_USER
 from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
 from student.models import CourseEnrollment
@@ -42,9 +52,14 @@ DEFAULT_ENROLLMENT_START_DATE = datetime.datetime(1900, 1, 1, tzinfo=utc)
 log = logging.getLogger(__name__)
 
 
-def get_program_marketing_url(programs_config):
+def get_program_marketing_url(programs_config, mobile_only=False):
     """Build a URL used to link to programs on the marketing site."""
-    return urljoin(settings.MKTG_URLS.get('ROOT'), programs_config.marketing_path).rstrip('/')
+    if mobile_only:
+        marketing_url = 'edxapp://course?programs'
+    else:
+        marketing_url = urljoin(settings.MKTG_URLS.get('ROOT'), programs_config.marketing_path).rstrip('/')
+
+    return marketing_url
 
 
 def attach_program_detail_url(programs, mobile_only=False):
@@ -95,7 +110,7 @@ class ProgramProgressMeter(object):
         self.course_run_ids = []
         for enrollment in self.enrollments:
             # enrollment.course_id is really a CourseKey (╯ಠ_ಠ）╯︵ ┻━┻
-            enrollment_id = unicode(enrollment.course_id)
+            enrollment_id = six.text_type(enrollment.course_id)
             mode = enrollment.mode
             if mode == CourseMode.NO_ID_PROFESSIONAL_MODE:
                 mode = CourseMode.PROFESSIONAL
@@ -105,8 +120,6 @@ class ProgramProgressMeter(object):
 
         self.entitlements = list(CourseEntitlement.unexpired_entitlements_for_user(self.user))
         self.course_uuids = [str(entitlement.course_uuid) for entitlement in self.entitlements]
-
-        self.course_grade_factory = CourseGradeFactory()
 
         if uuid:
             self.programs = [get_programs(uuid=uuid)]
@@ -140,7 +153,7 @@ class ProgramProgressMeter(object):
                             program_list.append(program)
 
         # Sort programs by title for consistent presentation.
-        for program_list in inverted_programs.itervalues():
+        for program_list in six.itervalues(inverted_programs):
             program_list.sort(key=lambda p: p['title'])
 
         return inverted_programs
@@ -262,17 +275,11 @@ class ProgramProgressMeter(object):
                 else:
                     not_started.append(course)
 
-            grades = {}
-            for run in self.course_run_ids:
-                grade = self.course_grade_factory.read(self.user, course_key=CourseKey.from_string(run))
-                grades[run] = grade.percent
-
             progress.append({
                 'uuid': program_copy['uuid'],
                 'completed': len(completed) if count_only else completed,
                 'in_progress': len(in_progress) if count_only else in_progress,
                 'not_started': len(not_started) if count_only else not_started,
-                'grades': grades,
             })
 
         return progress
@@ -326,14 +333,16 @@ class ProgramProgressMeter(object):
                 if modes_match and certificate_api.is_passing_status(certificate.status):
                     course_overview = CourseOverview.get_from_id(key)
                     available_date = available_date_for_certificate(course_overview, certificate)
-                    earliest_course_run_date = min(filter(None, [available_date, earliest_course_run_date]))
+                    earliest_course_run_date = min(
+                        [date for date in [available_date, earliest_course_run_date] if date]
+                    )
 
             # If we're missing a cert for a course, the program isn't completed and we should just bail now
             if earliest_course_run_date is None:
                 return None
 
             # Keep the catalog course date if it's the latest one
-            program_available_date = max(filter(None, [earliest_course_run_date, program_available_date]))
+            program_available_date = max([date for date in [earliest_course_run_date, program_available_date] if date])
 
         return program_available_date
 
@@ -427,7 +436,7 @@ class ProgramProgressMeter(object):
         completed_runs, failed_runs = [], []
         for certificate in course_run_certificates:
             course_data = {
-                'course_run_id': unicode(certificate['course_key']),
+                'course_run_id': six.text_type(certificate['course_key']),
                 'type': self._certificate_mode_translation(certificate['type']),
             }
 
@@ -592,7 +601,7 @@ class ProgramDataExtender(object):
         # Here we check the entitlements' expired_at_datetime property rather than filter by the expired_at attribute
         # to ensure that the expiration status is as up to date as possible
         entitlements = [e for e in entitlements if not e.expired_at_datetime]
-        courses_with_entitlements = set(unicode(entitlement.course_uuid) for entitlement in entitlements)
+        courses_with_entitlements = set(six.text_type(entitlement.course_uuid) for entitlement in entitlements)
         return [course for course in courses if course['uuid'] not in courses_with_entitlements]
 
     def _filter_out_courses_with_enrollments(self, courses):
@@ -610,10 +619,10 @@ class ProgramDataExtender(object):
             is_active=True,
             mode__in=self.data['applicable_seat_types']
         )
-        course_runs_with_enrollments = set(unicode(enrollment.course_id) for enrollment in enrollments)
+        course_runs_with_enrollments = set(six.text_type(enrollment.course_id) for enrollment in enrollments)
         courses_without_enrollments = []
         for course in courses:
-            if all(unicode(run['key']) not in course_runs_with_enrollments for run in course['course_runs']):
+            if all(six.text_type(run['key']) not in course_runs_with_enrollments for run in course['course_runs']):
                 courses_without_enrollments.append(course)
 
         return courses_without_enrollments
@@ -628,6 +637,7 @@ class ProgramDataExtender(object):
         applicable_seat_types = set(seat for seat in self.data['applicable_seat_types'] if seat != 'credit')
 
         is_learner_eligible_for_one_click_purchase = self.data['is_program_eligible_for_one_click_purchase']
+        bundle_uuid = self.data.get('uuid')
         skus = []
         bundle_variant = 'full'
 
@@ -678,9 +688,18 @@ class ProgramDataExtender(object):
                 # The user specific program price is slow to calculate, so use switch to force the
                 # anonymous price for all users. See LEARNER-5555 for more details.
                 if is_anonymous or ALWAYS_CALCULATE_PROGRAM_PRICE_AS_ANONYMOUS_USER.is_enabled():
-                    discount_data = api.baskets.calculate.get(sku=skus, is_anonymous=True)
+                    # The bundle uuid is necessary to see the program's discounted price
+                    if bundle_uuid:
+                        discount_data = api.baskets.calculate.get(sku=skus, is_anonymous=True, bundle=bundle_uuid)
+                    else:
+                        discount_data = api.baskets.calculate.get(sku=skus, is_anonymous=True)
                 else:
-                    discount_data = api.baskets.calculate.get(sku=skus, username=self.user.username)
+                    if bundle_uuid:
+                        discount_data = api.baskets.calculate.get(
+                            sku=skus, username=self.user.username, bundle=bundle_uuid
+                        )
+                    else:
+                        discount_data = api.baskets.calculate.get(sku=skus, username=self.user.username)
 
                 program_discounted_price = discount_data['total_incl_tax']
                 program_full_price = discount_data['total_incl_tax_excl_discounts']
@@ -805,7 +824,7 @@ class ProgramMarketingDataExtender(ProgramDataExtender):
             self.data['instructor_ordering'] = []
 
         sorted_instructor_names = [
-            ' '.join(filter(None, (instructor['given_name'], instructor['family_name'])))
+            ' '.join([name for name in (instructor['given_name'], instructor['family_name']) if name])
             for instructor in self.data['instructor_ordering']
         ]
         instructors_to_be_sorted = [
@@ -836,7 +855,7 @@ class ProgramMarketingDataExtender(ProgramDataExtender):
         return {name for name in chain(cls.__dict__, ProgramDataExtender.__dict__) if name.startswith(prefix)}
 
     def _attach_course_run_can_enroll(self, run_mode):
-        run_mode['can_enroll'] = bool(has_access(self.user, 'enroll', self.course_overview))
+        run_mode['can_enroll'] = bool(self.user.has_perm(ENROLL_IN_COURSE, self.course_overview))
 
     def _attach_course_run_certificate_url(self, run_mode):
         """
@@ -881,3 +900,56 @@ class ProgramMarketingDataExtender(ProgramDataExtender):
             for instructor in course_instructors.get('instructors', []):
                 if instructor.get('name', '').strip() not in curr_instructors_names:
                     self.instructors.append(instructor)
+
+
+def is_user_enrolled_in_program_type(user, program_type_slug, paid_modes_only=False, enrollments=None, entitlements=None):
+    """
+    This method will look at the learners Enrollments and Entitlements to determine
+    if a learner is enrolled in a Program of the given type.
+
+    NOTE: This method relies on the Program Cache right now. The goal is to move away from this
+    in the future.
+
+    Arguments:
+        user (User): The user we are looking for.
+        program_type_slug (str): The slug of the Program type we are looking for.
+        paid_modes_only (bool): Request if the user is enrolled in a Program in a paid mode, False by default.
+        enrollments (List[Dict]): Takes a serialized list of CourseEnrollments linked to the user
+        entitlements (List[CourseEntitlement]): Take a list of CourseEntitlement objects linked to the user
+
+        NOTE: Both enrollments and entitlements will be collected if they are not passed in. They are available
+        as parameters in case they were already collected, to save duplicate queries in high traffic areas.
+
+    Returns:
+        bool: True is the user is enrolled in programs of the requested type
+    """
+    course_runs = set()
+    course_uuids = set()
+    programs = get_programs_by_type(Site.objects.get_current(), program_type_slug)
+    if not programs:
+        return False
+
+    for program in programs:
+        for course in program.get('courses', []):
+            course_uuids.add(course.get('uuid'))
+            for course_run in course.get('course_runs', []):
+                course_runs.add(course_run['key'])
+
+    # Check Entitlements first, because there will be less Course Entitlements than
+    # Course Run Enrollments.
+    student_entitlements = entitlements if entitlements is not None else get_active_entitlement_list_for_user(user)
+    for entitlement in student_entitlements:
+        if str(entitlement.course_uuid) in course_uuids:
+            return True
+
+    student_enrollments = enrollments if enrollments is not None else get_enrollments(user.username)
+    for enrollment in student_enrollments:
+        course_run_id = enrollment['course_details']['course_id']
+        if paid_modes_only:
+            course_run_key = CourseKey.from_string(course_run_id)
+            paid_modes = [mode.slug for mode in get_paid_modes_for_course(course_run_key)]
+            if enrollment['mode'] in paid_modes and course_run_id in course_runs:
+                return True
+        elif course_run_id in course_runs:
+            return True
+    return False

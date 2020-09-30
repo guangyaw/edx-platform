@@ -1,19 +1,24 @@
+"""
+Urls of Studio.
+"""
+
 from django.conf import settings
 from django.conf.urls import include, url
 from django.conf.urls.static import static
 from django.contrib.admin import autodiscover as django_autodiscover
 from django.utils.translation import ugettext_lazy as _
-from rest_framework_swagger.views import get_swagger_view
+from edx_api_doc_tools import make_docs_urls
+from ratelimitbackend import admin
 
 import contentstore.views
-from cms.djangoapps.contentstore.views.organization import OrganizationListView
 import openedx.core.djangoapps.common_views.xblock
 import openedx.core.djangoapps.debug.views
 import openedx.core.djangoapps.lang_pref.views
+from cms.djangoapps.contentstore.views.organization import OrganizationListView
 from openedx.core.djangoapps.password_policy import compliance as password_policy_compliance
 from openedx.core.djangoapps.password_policy.forms import PasswordPolicyAwareAdminAuthForm
+from openedx.core.apidocs import api_info
 
-from ratelimitbackend import admin
 
 django_autodiscover()
 admin.site.site_header = _('Studio Administration')
@@ -51,6 +56,7 @@ urlpatterns = [
         contentstore.views.component_handler, name='component_handler'),
     url(r'^xblock/resource/(?P<block_type>[^/]*)/(?P<uri>.*)$',
         openedx.core.djangoapps.common_views.xblock.xblock_resource, name='xblock_resource_url'),
+    url(r'', include('openedx.core.djangoapps.xblock.rest_api.urls', namespace='xblock_api')),
     url(r'^not_found$', contentstore.views.not_found, name='not_found'),
     url(r'^server_error$', contentstore.views.server_error, name='server_error'),
     url(r'^organizations$', OrganizationListView.as_view(), name='organizations'),
@@ -58,7 +64,6 @@ urlpatterns = [
     # noop to squelch ajax errors
     url(r'^event$', contentstore.views.event, name='event'),
     url(r'^heartbeat', include('openedx.core.djangoapps.heartbeat.urls')),
-    url(r'^user_api/', include('openedx.core.djangoapps.user_api.legacy_urls')),
     url(r'^i18n/', include('django.conf.urls.i18n')),
 
     # User API endpoints
@@ -80,8 +85,6 @@ urlpatterns = [
     # restful api
     url(r'^$', contentstore.views.howitworks, name='homepage'),
     url(r'^howitworks$', contentstore.views.howitworks, name='howitworks'),
-    url(r'^signup$', contentstore.views.signup, name='signup'),
-    url(r'^signin$', contentstore.views.login_page, name='login'),
     url(r'^signin_redirect_to_lms$', contentstore.views.login_redirect_to_lms, name='login_redirect_to_lms'),
     url(r'^request_course_creator$', contentstore.views.request_course_creator, name='request_course_creator'),
     url(r'^course_team/{}(?:/(?P<email>.+))?$'.format(COURSELIKE_KEY_PATTERN),
@@ -174,6 +177,18 @@ urlpatterns = [
     url(r'^accessibility$', contentstore.views.accessibility, name='accessibility'),
 ]
 
+if not settings.DISABLE_DEPRECATED_SIGNIN_URL:
+    # TODO: Remove deprecated signin url when traffic proves it is no longer in use
+    urlpatterns += [
+        url(r'^signin$', contentstore.views.login_redirect_to_lms),
+    ]
+
+if not settings.DISABLE_DEPRECATED_SIGNUP_URL:
+    # TODO: Remove deprecated signup url when traffic proves it is no longer in use
+    urlpatterns += [
+        url(r'^signup$', contentstore.views.register_redirect_to_lms, name='register_redirect_to_lms'),
+    ]
+
 JS_INFO_DICT = {
     'domain': 'djangojs',
     # We need to explicitly include external Django apps that are not in LOCALE_PATHS.
@@ -200,9 +215,10 @@ if settings.FEATURES.get('ENABLE_SERVICE_STATUS'):
 
 # The password pages in the admin tool are disabled so that all password
 # changes go through our user portal and follow complexity requirements.
+if not settings.FEATURES.get('ENABLE_CHANGE_USER_PASSWORD_ADMIN'):
+    urlpatterns.append(url(r'^admin/auth/user/\d+/password/$', handler404))
 urlpatterns.append(url(r'^admin/password_change/$', handler404))
-urlpatterns.append(url(r'^admin/auth/user/\d+/password/$', handler404))
-urlpatterns.append(url(r'^admin/', include(admin.site.urls)))
+urlpatterns.append(url(r'^admin/', admin.site.urls))
 
 # enable entrance exams
 if settings.FEATURES.get('ENTRANCE_EXAMS'):
@@ -258,16 +274,42 @@ if 'debug_toolbar' in settings.INSTALLED_APPS:
 urlpatterns.append(url(r'^template/(?P<template>.+)$', openedx.core.djangoapps.debug.views.show_reference_template,
                        name='openedx.core.djangoapps.debug.views.show_reference_template'))
 
+urlpatterns.append(
+    url(
+        r'^api/learning_sequences/',
+        include(
+            ('openedx.core.djangoapps.content.learning_sequences.urls', 'learning_sequences'),
+            namespace='learning_sequences'
+        ),
+    ),
+)
+
 # display error page templates, for testing purposes
 urlpatterns += [
     url(r'^404$', handler404),
     url(r'^500$', handler500),
 ]
 
-if settings.FEATURES.get('ENABLE_API_DOCS'):
+# API docs.
+urlpatterns += make_docs_urls(api_info)
+
+# edx-drf-extensions csrf app
+urlpatterns += [
+    url(r'', include('csrf.urls')),
+]
+
+if 'openedx.testing.coverage_context_listener' in settings.INSTALLED_APPS:
     urlpatterns += [
-        url(r'^api-docs/$', get_swagger_view(title='Studio API')),
+        url(r'coverage_context', include('openedx.testing.coverage_context_listener.urls'))
     ]
 
-from openedx.core.djangoapps.plugins import constants as plugin_constants, plugin_urls
-urlpatterns.extend(plugin_urls.get_patterns(plugin_constants.ProjectType.CMS))
+# pylint: disable=wrong-import-position, wrong-import-order
+from edx_django_utils.plugins import get_plugin_url_patterns
+# pylint: disable=wrong-import-position
+from openedx.core.djangoapps.plugins.constants import ProjectType
+urlpatterns.extend(get_plugin_url_patterns(ProjectType.CMS))
+
+# Contentstore
+urlpatterns += [
+    url(r'^api/contentstore/', include('cms.djangoapps.contentstore.rest_api.urls'))
+]

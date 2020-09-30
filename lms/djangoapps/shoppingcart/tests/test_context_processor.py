@@ -1,6 +1,8 @@
 """
 Unit tests for shoppingcart context_processor
 """
+
+
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
 from mock import Mock, patch

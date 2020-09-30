@@ -2,11 +2,13 @@
 Models to support Course Surveys feature
 """
 
+
 import logging
 from collections import OrderedDict
 
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils.encoding import python_2_unicode_compatible
 from lxml import etree
 from model_utils.models import TimeStampedModel
 from opaque_keys.edx.django.models import CourseKeyField
@@ -18,6 +20,7 @@ from survey.exceptions import SurveyFormNameAlreadyExists, SurveyFormNotFound
 log = logging.getLogger("edx.survey")
 
 
+@python_2_unicode_compatible
 class SurveyForm(TimeStampedModel):
     """
     Model to define a Survey Form that contains the HTML form data
@@ -33,7 +36,7 @@ class SurveyForm(TimeStampedModel):
     class Meta(object):
         app_label = 'survey'
 
-    def __unicode__(self):
+    def __str__(self):
         return self.name
 
     def save(self, *args, **kwargs):
@@ -157,7 +160,7 @@ class SurveyForm(TimeStampedModel):
         )
 
         for input_field in input_fields:
-            if 'name' in input_field.keys() and input_field.attrib['name'] not in names:
+            if 'name' in list(input_field.keys()) and input_field.attrib['name'] not in names:
                 names.append(input_field.attrib['name'])
 
         return names

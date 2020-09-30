@@ -2,35 +2,42 @@
 """
 Tests for course access
 """
-import itertools
+
 
 import datetime
+import itertools
+
 import ddt
 import mock
 import pytz
+import six
+from completion.models import BlockCompletion
+from completion.test_utils import CompletionWaffleTestMixin
+from crum import set_current_request
 from django.conf import settings
-from django.urls import reverse
 from django.test.client import RequestFactory
 from django.test.utils import override_settings
+from django.urls import reverse
 from opaque_keys.edx.keys import CourseKey
 from six import text_type
-from crum import set_current_request
+from six.moves import range
 
-from courseware.courses import (
+from lms.djangoapps.courseware.courses import (
     course_open_for_self_enrollment,
     get_cms_block_link,
     get_cms_course_link,
     get_course_about_section,
+    get_course_assignments,
     get_course_by_id,
     get_course_chapter_ids,
     get_course_info_section,
     get_course_overview_with_access,
     get_course_with_access,
     get_courses,
-    get_current_child,
+    get_current_child
 )
-from courseware.model_data import FieldDataCache
-from courseware.module_render import get_module_for_descriptor
+from lms.djangoapps.courseware.model_data import FieldDataCache
+from lms.djangoapps.courseware.module_render import get_module_for_descriptor
 from lms.djangoapps.courseware.courseware_access_exception import CoursewareAccessException
 from openedx.core.djangolib.testing.utils import get_mock_request
 from openedx.core.lib.courses import course_image_url
@@ -40,8 +47,8 @@ from xmodule.modulestore.django import _get_modulestore_branch_setting, modulest
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory, check_mongo_calls
 from xmodule.modulestore.xml_importer import import_course_from_xml
-from xmodule.tests.xml import factories as xml
 from xmodule.tests.xml import XModuleXmlImportTest
+from xmodule.tests.xml import factories as xml
 
 CMS_BASE_TEST = 'testcms'
 TEST_DATA_DIR = settings.COMMON_TEST_DATA_ROOT
@@ -67,9 +74,9 @@ class CoursesTest(ModuleStoreTestCase):
             org='org', number='num', display_name='name'
         )
 
-        cms_url = u"//{}/course/{}".format(CMS_BASE_TEST, unicode(self.course.id))
+        cms_url = u"//{}/course/{}".format(CMS_BASE_TEST, six.text_type(self.course.id))
         self.assertEqual(cms_url, get_cms_course_link(self.course))
-        cms_url = u"//{}/course/{}".format(CMS_BASE_TEST, unicode(self.course.location))
+        cms_url = u"//{}/course/{}".format(CMS_BASE_TEST, six.text_type(self.course.location))
         self.assertEqual(cms_url, get_cms_block_link(self.course, 'course'))
 
     @ddt.data(GET_COURSE_WITH_ACCESS, GET_COURSE_OVERVIEW_WITH_ACCESS)
@@ -222,12 +229,12 @@ class MongoCourseImageTestCase(ModuleStoreTestCase):
     def test_get_image_url(self):
         """Test image URL formatting."""
         course = CourseFactory.create(org='edX', course='999')
-        self.assertEquals(course_image_url(course), '/c4x/edX/999/asset/{0}'.format(course.course_image))
+        self.assertEqual(course_image_url(course), '/c4x/edX/999/asset/{0}'.format(course.course_image))
 
     def test_non_ascii_image_name(self):
         # Verify that non-ascii image names are cleaned
         course = CourseFactory.create(course_image=u'before_\N{SNOWMAN}_after.jpg')
-        self.assertEquals(
+        self.assertEqual(
             course_image_url(course),
             '/c4x/{org}/{course}/asset/before___after.jpg'.format(
                 org=course.location.org,
@@ -238,7 +245,7 @@ class MongoCourseImageTestCase(ModuleStoreTestCase):
     def test_spaces_in_image_name(self):
         # Verify that image names with spaces in them are cleaned
         course = CourseFactory.create(course_image=u'before after.jpg')
-        self.assertEquals(
+        self.assertEqual(
             course_image_url(course),
             '/c4x/{org}/{course}/asset/before_after.jpg'.format(
                 org=course.location.org,
@@ -252,7 +259,7 @@ class MongoCourseImageTestCase(ModuleStoreTestCase):
         being set that we get the right course_image url.
         """
         course = CourseFactory.create(static_asset_path="foo")
-        self.assertEquals(
+        self.assertEqual(
             course_image_url(course),
             '/static/foo/images/course_image.jpg'
         )
@@ -264,7 +271,7 @@ class MongoCourseImageTestCase(ModuleStoreTestCase):
         """
         course = CourseFactory.create(course_image=u'things_stuff.jpg',
                                       static_asset_path="foo")
-        self.assertEquals(
+        self.assertEqual(
             course_image_url(course),
             '/static/foo/things_stuff.jpg'
         )
@@ -276,15 +283,15 @@ class XmlCourseImageTestCase(XModuleXmlImportTest):
     def test_get_image_url(self):
         """Test image URL formatting."""
         course = self.process_xml(xml.CourseFactory.build())
-        self.assertEquals(course_image_url(course), '/static/xml_test_course/images/course_image.jpg')
+        self.assertEqual(course_image_url(course), '/static/xml_test_course/images/course_image.jpg')
 
     def test_non_ascii_image_name(self):
         course = self.process_xml(xml.CourseFactory.build(course_image=u'before_\N{SNOWMAN}_after.jpg'))
-        self.assertEquals(course_image_url(course), u'/static/xml_test_course/before_\N{SNOWMAN}_after.jpg')
+        self.assertEqual(course_image_url(course), u'/static/xml_test_course/before_\N{SNOWMAN}_after.jpg')
 
     def test_spaces_in_image_name(self):
         course = self.process_xml(xml.CourseFactory.build(course_image=u'before after.jpg'))
-        self.assertEquals(course_image_url(course), u'/static/xml_test_course/before after.jpg')
+        self.assertEqual(course_image_url(course), u'/static/xml_test_course/before after.jpg')
 
 
 class CoursesRenderTest(ModuleStoreTestCase):
@@ -311,7 +318,7 @@ class CoursesRenderTest(ModuleStoreTestCase):
         self.assertEqual(course_info, u"<a href='/c4x/edX/toy/asset/handouts_sample_handout.txt'>Sample</a>")
 
         # Test when render raises an exception
-        with mock.patch('courseware.courses.get_module') as mock_module_render:
+        with mock.patch('lms.djangoapps.courseware.courses.get_module') as mock_module_render:
             mock_module_render.return_value = mock.MagicMock(
                 render=mock.Mock(side_effect=Exception('Render failed!'))
             )
@@ -325,7 +332,7 @@ class CoursesRenderTest(ModuleStoreTestCase):
         self.assertEqual(course_about, "A course about toys.")
 
         # Test when render raises an exception
-        with mock.patch('courseware.courses.get_module') as mock_module_render:
+        with mock.patch('lms.djangoapps.courseware.courses.get_module') as mock_module_render:
             mock_module_render.return_value = mock.MagicMock(
                 render=mock.Mock(side_effect=Exception('Render failed!'))
             )
@@ -389,7 +396,7 @@ class CourseInstantiationTests(ModuleStoreTestCase):
 
         self.factory = RequestFactory()
 
-    @ddt.data(*itertools.product(xrange(5), [ModuleStoreEnum.Type.mongo, ModuleStoreEnum.Type.split], [None, 0, 5]))
+    @ddt.data(*itertools.product(range(5), [ModuleStoreEnum.Type.mongo, ModuleStoreEnum.Type.split], [None, 0, 5]))
     @ddt.unpack
     def test_repeated_course_module_instantiation(self, loops, default_store, course_depth):
 
@@ -400,12 +407,12 @@ class CourseInstantiationTests(ModuleStoreTestCase):
             __ = ItemFactory(parent=section, category='problem')
 
         fake_request = self.factory.get(
-            reverse('progress', kwargs={'course_id': unicode(course.id)})
+            reverse('progress', kwargs={'course_id': six.text_type(course.id)})
         )
 
         course = modulestore().get_course(course.id, depth=course_depth)
 
-        for _ in xrange(loops):
+        for _ in range(loops):
             field_data_cache = FieldDataCache.cache_for_descriptor_descendents(
                 course.id, self.user, course, depth=course_depth
             )
@@ -448,5 +455,28 @@ class TestGetCourseChapters(ModuleStoreTestCase):
         self.assertEqual(len(course_chapter_ids), 2)
         self.assertEqual(
             course_chapter_ids,
-            [unicode(child) for child in course.children]
+            [six.text_type(child) for child in course.children]
         )
+
+
+class TestGetCourseAssignments(CompletionWaffleTestMixin, ModuleStoreTestCase):
+    """
+    Tests for the `get_course_assignments` function.
+    """
+
+    def test_completion_ignores_non_scored_items(self):
+        """
+        Test that we treat a sequential with incomplete (but not scored) items (like a video maybe) as complete.
+        """
+        course = CourseFactory()
+        chapter = ItemFactory(parent=course, category='chapter', graded=True, due=datetime.datetime.now())
+        sequential = ItemFactory(parent=chapter, category='sequential')
+        problem = ItemFactory(parent=sequential, category='problem', has_score=True)
+        ItemFactory(parent=sequential, category='video', has_score=False)
+
+        self.override_waffle_switch(True)
+        BlockCompletion.objects.submit_completion(self.user, problem.location, 1)
+
+        assignments = get_course_assignments(course.location.context_key, self.user, None)
+        self.assertEqual(len(assignments), 1)
+        self.assertTrue(assignments[0].complete)

@@ -1,6 +1,8 @@
 """
 Dummy factories for tests
 """
+
+
 from factory import Sequence, SubFactory
 from factory.django import DjangoModelFactory
 
@@ -8,7 +10,8 @@ from lms.djangoapps.ccx.models import CustomCourseForEdX
 from student.tests.factories import UserFactory
 
 
-class CcxFactory(DjangoModelFactory):  # pylint: disable=missing-docstring
+# pylint: disable=missing-class-docstring
+class CcxFactory(DjangoModelFactory):
     class Meta(object):
         model = CustomCourseForEdX
 

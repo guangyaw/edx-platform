@@ -45,30 +45,36 @@ Eligibility:
        then the student will be issued a certificate regardless of his grade,
        unless he has allow_certificate set to False.
 """
+
+
 import json
 import logging
 import os
 import uuid
 
+import six
 from config_models.models import ConfigurationModel
+from django.apps import apps
 from django.conf import settings
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.db.models import Count
 from django.dispatch import receiver
+from django.utils.encoding import python_2_unicode_compatible
 from django.utils.translation import ugettext_lazy as _
 from model_utils import Choices
 from model_utils.fields import AutoCreatedField
 from model_utils.models import TimeStampedModel
 from opaque_keys.edx.django.models import CourseKeyField
+from simple_history.models import HistoricalRecords
 
 from badges.events.course_complete import course_badge_check
 from badges.events.course_meta import completion_check, course_group_check
 from course_modes.models import CourseMode
 from lms.djangoapps.instructor_task.models import InstructorTask
 from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
-from openedx.core.djangoapps.signals.signals import COURSE_CERT_AWARDED, COURSE_CERT_CHANGED
+from openedx.core.djangoapps.signals.signals import COURSE_CERT_AWARDED, COURSE_CERT_CHANGED, COURSE_CERT_REVOKED
 from openedx.core.djangoapps.xmodule_django.models import NoneToEmptyManager
 from util.milestones_helpers import fulfill_course_milestone, is_prerequisite_courses_enabled
 
@@ -180,12 +186,12 @@ class CertificateWhitelist(models.Model):
             result.append({
                 'id': item.id,
                 'user_id': item.user.id,
-                'user_name': unicode(item.user.username),
-                'user_email': unicode(item.user.email),
-                'course_id': unicode(item.course_id),
+                'user_name': six.text_type(item.user.username),
+                'user_email': six.text_type(item.user.email),
+                'course_id': six.text_type(item.course_id),
                 'created': item.created.strftime(u"%B %d, %Y"),
                 'certificate_generated': certificate_generated and certificate_generated.strftime(u"%B %d, %Y"),
-                'notes': unicode(item.notes or ''),
+                'notes': six.text_type(item.notes or ''),
             })
         return result
 
@@ -226,8 +232,9 @@ class EligibleAvailableCertificateManager(EligibleCertificateManager):
         Return a queryset for `GeneratedCertificate` models, filtering out
         ineligible certificates and any linked to nonexistent courses.
         """
-        return super(EligibleAvailableCertificateManager, self).get_queryset().filter(
-            course_id__in=list(CourseOverview.objects.values_list('id', flat=True))
+        return super(EligibleAvailableCertificateManager, self).get_queryset().extra(
+            tables=['course_overviews_courseoverview'],
+            where=['course_id = course_overviews_courseoverview.id']
         )
 
 
@@ -256,7 +263,7 @@ class GeneratedCertificate(models.Model):
     # results. Django requires us to explicitly declare this.
     objects = models.Manager()
 
-    MODES = Choices('verified', 'honor', 'audit', 'professional', 'no-id-professional', 'masters')
+    MODES = Choices(u'verified', u'honor', u'audit', u'professional', u'no-id-professional', u'masters')
 
     VERIFIED_CERTS_MODES = [CourseMode.VERIFIED, CourseMode.CREDIT_MODE, CourseMode.MASTERS]
 
@@ -268,12 +275,18 @@ class GeneratedCertificate(models.Model):
     grade = models.CharField(max_length=5, blank=True, default='')
     key = models.CharField(max_length=32, blank=True, default='')
     distinction = models.BooleanField(default=False)
-    status = models.CharField(max_length=32, default='unavailable')
+    status = models.CharField(max_length=32, default=u'unavailable')
     mode = models.CharField(max_length=32, choices=MODES, default=MODES.honor)
     name = models.CharField(blank=True, max_length=255)
     created_date = models.DateTimeField(auto_now_add=True)
     modified_date = models.DateTimeField(auto_now=True)
     error_reason = models.CharField(max_length=512, blank=True, default='')
+
+    # This is necessary because CMS does not install the certificates app, but it
+    # imports this models code. Simple History will attempt to connect to the installed
+    # model in the certificates app, which will fail.
+    if 'certificates' in apps.app_configs:
+        history = HistoricalRecords()
 
     class Meta(object):
         unique_together = (('user', 'course_id'),)
@@ -306,7 +319,7 @@ class GeneratedCertificate(models.Model):
         return {
             cert.course_id
             for cert
-            in cls.objects.filter(user=user).only('course_id')  # pylint: disable=no-member
+            in cls.objects.filter(user=user).only('course_id')
         }
 
     @classmethod
@@ -356,8 +369,14 @@ class GeneratedCertificate(models.Model):
         self.download_url = ''
         self.grade = ''
         self.status = CertificateStatuses.unavailable
-
         self.save()
+        COURSE_CERT_REVOKED.send_robust(
+            sender=self.__class__,
+            user=self.user,
+            course_key=self.course_id,
+            mode=self.mode,
+            status=self.status,
+        )
 
     def mark_notpassing(self, grade):
         """
@@ -400,6 +419,7 @@ class GeneratedCertificate(models.Model):
             )
 
 
+@python_2_unicode_compatible
 class CertificateGenerationHistory(TimeStampedModel):
     """
     Model for storing Certificate Generation History.
@@ -459,11 +479,12 @@ class CertificateGenerationHistory(TimeStampedModel):
     class Meta(object):
         app_label = "certificates"
 
-    def __unicode__(self):
+    def __str__(self):
         return u"certificates %s by %s on %s for %s" % \
                ("regenerated" if self.is_regeneration else "generated", self.generated_by, self.created, self.course_id)
 
 
+@python_2_unicode_compatible
 class CertificateInvalidation(TimeStampedModel):
     """
     Model for storing Certificate Invalidation.
@@ -478,7 +499,7 @@ class CertificateInvalidation(TimeStampedModel):
     class Meta(object):
         app_label = "certificates"
 
-    def __unicode__(self):
+    def __str__(self):
         return u"Certificate %s, invalidated by %s on %s." % \
                (self.generated_certificate, self.invalidated_by, self.created)
 
@@ -759,9 +780,9 @@ class ExampleCertificate(TimeStampedModel):
         app_label = "certificates"
 
     # Statuses
-    STATUS_STARTED = 'started'
-    STATUS_SUCCESS = 'success'
-    STATUS_ERROR = 'error'
+    STATUS_STARTED = u'started'
+    STATUS_SUCCESS = u'success'
+    STATUS_ERROR = u'error'
 
     # Dummy full name for the generated certificate
     EXAMPLE_FULL_NAME = u'John Doë'
@@ -820,9 +841,9 @@ class ExampleCertificate(TimeStampedModel):
         max_length=255,
         default=STATUS_STARTED,
         choices=(
-            (STATUS_STARTED, 'Started'),
-            (STATUS_SUCCESS, 'Success'),
-            (STATUS_ERROR, 'Error')
+            (STATUS_STARTED, u'Started'),
+            (STATUS_SUCCESS, u'Success'),
+            (STATUS_ERROR, u'Error')
         ),
         help_text=_(u"The status of the example certificate.")
     )
@@ -1041,7 +1062,7 @@ class CertificateHtmlViewConfiguration(ConfigurationModel):
         app_label = "certificates"
 
     configuration = models.TextField(
-        help_text="Certificate HTML View Parameters (JSON)"
+        help_text=u"Certificate HTML View Parameters (JSON)"
     )
 
     def clean(self):
@@ -1063,6 +1084,7 @@ class CertificateHtmlViewConfiguration(ConfigurationModel):
         return json_data
 
 
+@python_2_unicode_compatible
 class CertificateTemplate(TimeStampedModel):
     """A set of custom web certificate templates.
 
@@ -1119,7 +1141,7 @@ class CertificateTemplate(TimeStampedModel):
                   u'Course language is determined by the first two letters of the language code.'
     )
 
-    def __unicode__(self):
+    def __str__(self):
         return u'%s' % (self.name, )
 
     class Meta(object):
@@ -1143,6 +1165,7 @@ def template_assets_path(instance, filename):
     return name
 
 
+@python_2_unicode_compatible
 class CertificateTemplateAsset(TimeStampedModel):
     """A set of assets to be used in custom web certificate templates.
 
@@ -1179,7 +1202,7 @@ class CertificateTemplateAsset(TimeStampedModel):
 
         super(CertificateTemplateAsset, self).save(*args, **kwargs)
 
-    def __unicode__(self):
+    def __str__(self):
         return u'%s' % (self.asset.url, )
 
     class Meta(object):

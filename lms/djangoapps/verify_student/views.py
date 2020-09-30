@@ -6,8 +6,8 @@ import datetime
 import decimal
 import json
 import logging
-import urllib
 
+import six
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.contrib.staticfiles.storage import staticfiles_storage
@@ -17,27 +17,28 @@ from django.http import Http404, HttpResponse, HttpResponseBadRequest
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.decorators import method_decorator
+from django.utils.timezone import now
 from django.utils.translation import ugettext as _
 from django.utils.translation import ugettext_lazy
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from django.views.generic.base import View
 from edx_rest_api_client.exceptions import SlumberBaseException
-from eventtracking import tracker
 from ipware.ip import get_ip
 from opaque_keys import InvalidKeyError
 from opaque_keys.edx.keys import CourseKey
-from pytz import UTC
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from course_modes.models import CourseMode
 from edxmako.shortcuts import render_to_response, render_to_string
 from lms.djangoapps.commerce.utils import EcommerceService, is_account_activation_requirement_disabled
+from lms.djangoapps.verify_student.emails import send_verification_approved_email, send_verification_confirmation_email
 from lms.djangoapps.verify_student.image import InvalidImageData, decode_image_data
 from lms.djangoapps.verify_student.models import SoftwareSecurePhotoVerification, VerificationDeadline
-from lms.djangoapps.verify_student.services import IDVerificationService
 from lms.djangoapps.verify_student.ssencrypt import has_valid_signature
 from lms.djangoapps.verify_student.tasks import send_verification_status_email
-from lms.djangoapps.verify_student.utils import is_verification_expiring_soon
+from lms.djangoapps.verify_student.utils import can_verify_now
 from openedx.core.djangoapps.commerce.utils import ecommerce_api_client
 from openedx.core.djangoapps.embargo import api as embargo_api
 from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
@@ -45,13 +46,15 @@ from openedx.core.djangoapps.user_api.accounts import NAME_MIN_LENGTH
 from openedx.core.djangoapps.user_api.accounts.api import update_account_settings
 from openedx.core.djangoapps.user_api.errors import AccountValidationError, UserNotFound
 from openedx.core.lib.log_utils import audit_log
-from shoppingcart.models import CertificateItem, Order
-from shoppingcart.processors import get_purchase_endpoint, get_signed_purchase_params
 from student.models import CourseEnrollment
 from track import segment
 from util.db import outer_atomic
 from util.json_request import JsonResponse
+from verify_student.toggles import use_new_templates_for_id_verification_emails
 from xmodule.modulestore.django import modulestore
+
+from .services import IDVerificationService
+from .toggles import redirect_to_idv_microfrontend
 
 log = logging.getLogger(__name__)
 
@@ -113,7 +116,6 @@ class PayAndVerifyView(View):
     #
     INTRO_STEP = 'intro-step'
     MAKE_PAYMENT_STEP = 'make-payment-step'
-    PAYMENT_CONFIRMATION_STEP = 'payment-confirmation-step'
     FACE_PHOTO_STEP = 'face-photo-step'
     ID_PHOTO_STEP = 'id-photo-step'
     REVIEW_PHOTOS_STEP = 'review-photos-step'
@@ -122,7 +124,6 @@ class PayAndVerifyView(View):
     ALL_STEPS = [
         INTRO_STEP,
         MAKE_PAYMENT_STEP,
-        PAYMENT_CONFIRMATION_STEP,
         FACE_PHOTO_STEP,
         ID_PHOTO_STEP,
         REVIEW_PHOTOS_STEP,
@@ -131,7 +132,6 @@ class PayAndVerifyView(View):
 
     PAYMENT_STEPS = [
         MAKE_PAYMENT_STEP,
-        PAYMENT_CONFIRMATION_STEP
     ]
 
     VERIFICATION_STEPS = [
@@ -149,7 +149,6 @@ class PayAndVerifyView(View):
     STEP_TITLES = {
         INTRO_STEP: ugettext_lazy("Intro"),
         MAKE_PAYMENT_STEP: ugettext_lazy("Make payment"),
-        PAYMENT_CONFIRMATION_STEP: ugettext_lazy("Payment confirmation"),
         FACE_PHOTO_STEP: ugettext_lazy("Take photo"),
         ID_PHOTO_STEP: ugettext_lazy("Take a photo of your ID"),
         REVIEW_PHOTOS_STEP: ugettext_lazy("Review your info"),
@@ -168,7 +167,6 @@ class PayAndVerifyView(View):
     VERIFY_NOW_MSG = 'verify-now'
     VERIFY_LATER_MSG = 'verify-later'
     UPGRADE_MSG = 'upgrade'
-    PAYMENT_CONFIRMATION_MSG = 'payment-confirmation'
 
     # Requirements
     #
@@ -240,7 +238,7 @@ class PayAndVerifyView(View):
 
         # Verify that the course exists
         if course is None:
-            log.warn(u"Could not find course with ID %s.", course_id)
+            log.warning(u"Could not find course with ID %s.", course_id)
             raise Http404
 
         # Check whether the user has access to this course
@@ -296,7 +294,7 @@ class PayAndVerifyView(View):
         else:
             # Otherwise, there has never been a verified/paid mode,
             # so return a page not found response.
-            log.warn(
+            log.warning(
                 u"No paid/verified course mode found for course '%s' for verification/payment flow request",
                 course_id
             )
@@ -376,10 +374,10 @@ class PayAndVerifyView(View):
                 current_step = display_steps[current_step_idx + 1]['name']
 
         courseware_url = ""
-        if not course.start or course.start < datetime.datetime.today().replace(tzinfo=UTC):
+        if not course.start or course.start < now():
             courseware_url = reverse(
                 'course_root',
-                kwargs={'course_id': unicode(course_key)}
+                kwargs={'course_id': six.text_type(course_key)}
             )
 
         full_name = (
@@ -392,7 +390,7 @@ class PayAndVerifyView(View):
         # use that amount to pre-fill the price selection form.
         contribution_amount = request.session.get(
             'donation_for_course', {}
-        ).get(unicode(course_key), '')
+        ).get(six.text_type(course_key), '')
 
         # Remember whether the user is upgrading
         # so we can fire an analytics event upon payment.
@@ -413,7 +411,7 @@ class PayAndVerifyView(View):
         context = {
             'contribution_amount': contribution_amount,
             'course': course,
-            'course_key': unicode(course_key),
+            'course_key': six.text_type(course_key),
             'checkpoint_location': request.GET.get('checkpoint'),
             'course_mode': relevant_course_mode,
             'courseware_url': courseware_url,
@@ -441,10 +439,10 @@ class PayAndVerifyView(View):
         # utm_params is [(u'utm_content', u'course-v1:IDBx IDB20.1x 1T2017'),...
         utm_params = [item for item in self.request.GET.items() if 'utm_' in item[0]]
         # utm_params is utm_content=course-v1%3AIDBx+IDB20.1x+1T2017&...
-        utm_params = urllib.urlencode(utm_params, True)
+        utm_params = six.moves.urllib.parse.urlencode(utm_params, True)
         # utm_params is utm_content=course-v1:IDBx+IDB20.1x+1T2017&...
         # (course-keys do not have url encoding)
-        utm_params = urllib.unquote(utm_params)
+        utm_params = six.moves.urllib.parse.unquote(utm_params)
         if utm_params:
             if '?' in url:
                 url = url + '&' + utm_params
@@ -453,8 +451,8 @@ class PayAndVerifyView(View):
         return url
 
     def _redirect_if_necessary(
-            self, message, already_verified, already_paid, is_enrolled, course_key,
-            user_is_trying_to_pay, user, sku
+        self, message, already_verified, already_paid, is_enrolled, course_key,
+        user_is_trying_to_pay, user, sku
     ):
         """Redirect the user to a more appropriate page if necessary.
 
@@ -488,14 +486,13 @@ class PayAndVerifyView(View):
 
         """
         url = None
-        course_kwargs = {'course_id': unicode(course_key)}
+        course_kwargs = {'course_id': six.text_type(course_key)}
 
         if already_verified and already_paid:
             # If they've already paid and verified, there's nothing else to do,
             # so redirect them to the dashboard.
-            if message != self.PAYMENT_CONFIRMATION_MSG:
-                url = reverse('dashboard')
-        elif message in [self.VERIFY_NOW_MSG, self.VERIFY_LATER_MSG, self.PAYMENT_CONFIRMATION_MSG]:
+            url = reverse('dashboard')
+        elif message in [self.VERIFY_NOW_MSG, self.VERIFY_LATER_MSG]:
             if is_enrolled:
                 # If the user is already enrolled but hasn't yet paid,
                 # then the "upgrade" messaging is more appropriate.
@@ -509,7 +506,10 @@ class PayAndVerifyView(View):
             if is_enrolled:
                 if already_paid:
                     # If the student has paid, but not verified, redirect to the verification flow.
-                    url = reverse('verify_student_verify_now', kwargs=course_kwargs)
+                    url = IDVerificationService.get_verify_location(
+                        'verify_student_verify_now',
+                        six.text_type(course_key)
+                    )
             else:
                 url = reverse('verify_student_start_flow', kwargs=course_kwargs)
 
@@ -597,7 +597,7 @@ class PayAndVerifyView(View):
         return [
             {
                 'name': step,
-                'title': unicode(self.STEP_TITLES[step]),
+                'title': six.text_type(self.STEP_TITLES[step]),
             }
             for step in display_steps
             if step not in remove_steps
@@ -631,7 +631,7 @@ class PayAndVerifyView(View):
 
         display_steps = set(step['name'] for step in display_steps)
 
-        for step, step_requirements in self.STEP_REQUIREMENTS.iteritems():
+        for step, step_requirements in six.iteritems(self.STEP_REQUIREMENTS):
             if step in display_steps:
                 for requirement in step_requirements:
                     all_requirements[requirement] = True
@@ -716,7 +716,7 @@ class PayAndVerifyView(View):
 
         deadline_passed = (
             deadline_datetime is not None and
-            deadline_datetime < datetime.datetime.now(UTC)
+            deadline_datetime < now()
         )
         if deadline_passed:
             context = {
@@ -729,7 +729,7 @@ class PayAndVerifyView(View):
 
 def checkout_with_ecommerce_service(user, course_key, course_mode, processor):
     """ Create a new basket and trigger immediate checkout, using the E-Commerce API. """
-    course_id = unicode(course_key)
+    course_id = six.text_type(course_key)
     try:
         api = ecommerce_api_client(user)
         # Make an API call to create the order and retrieve the results
@@ -755,38 +755,6 @@ def checkout_with_ecommerce_service(user, course_key, course_mode, processor):
         )
 
 
-def checkout_with_shoppingcart(request, user, course_key, course_mode, amount):
-    """ Create an order and trigger checkout using shoppingcart."""
-    cart = Order.get_cart_for_user(user)
-    cart.clear()
-    enrollment_mode = course_mode.slug
-    CertificateItem.add_to_order(cart, course_key, amount, enrollment_mode)
-
-    # Change the order's status so that we don't accidentally modify it later.
-    # We need to do this to ensure that the parameters we send to the payment system
-    # match what we store in the database.
-    # (Ordinarily we would do this client-side when the user submits the form, but since
-    # the JavaScript on this page does that immediately, we make the change here instead.
-    # This avoids a second AJAX call and some additional complication of the JavaScript.)
-    # If a user later re-enters the verification / payment flow, she will create a new order.
-    cart.start_purchase()
-
-    callback_url = request.build_absolute_uri(
-        reverse("shoppingcart.views.postpay_callback")
-    )
-
-    payment_data = {
-        'payment_processor_name': settings.CC_PROCESSOR_NAME,
-        'payment_page_url': get_purchase_endpoint(),
-        'payment_form_data': get_signed_purchase_params(
-            cart,
-            callback_url=callback_url,
-            extra_data=[unicode(course_key), course_mode.slug]
-        ),
-    }
-    return payment_data
-
-
 @require_POST
 @login_required
 def create_order(request):
@@ -798,7 +766,7 @@ def create_order(request):
     course_id = request.POST['course_id']
     course_id = CourseKey.from_string(course_id)
     donation_for_course = request.session.get('donation_for_course', {})
-    contribution = request.POST.get("contribution", donation_for_course.get(unicode(course_id), 0))
+    contribution = request.POST.get("contribution", donation_for_course.get(six.text_type(course_id), 0))
     try:
         amount = decimal.Decimal(contribution).quantize(decimal.Decimal('.01'), rounding=decimal.ROUND_DOWN)
     except decimal.InvalidOperation:
@@ -819,12 +787,12 @@ def create_order(request):
         paid_modes = CourseMode.paid_modes_for_course(course_id)
         if paid_modes:
             if len(paid_modes) > 1:
-                log.warn(u"Multiple paid course modes found for course '%s' for create order request", course_id)
+                log.warning(u"Multiple paid course modes found for course '%s' for create order request", course_id)
             current_mode = paid_modes[0]
 
     # Make sure this course has a paid mode
     if not current_mode:
-        log.warn(u"Create order requested for course '%s' without a paid mode.", course_id)
+        log.warning(u"Create order requested for course '%s' without a paid mode.", course_id)
         return HttpResponseBadRequest(_("This course doesn't support paid certificates"))
 
     if CourseMode.is_professional_mode(current_mode):
@@ -833,16 +801,13 @@ def create_order(request):
     if amount < current_mode.min_price:
         return HttpResponseBadRequest(_("No selected price or selected price is below minimum."))
 
-    if current_mode.sku:
-        # if request.POST doesn't contain 'processor' then the service's default payment processor will be used.
-        payment_data = checkout_with_ecommerce_service(
-            request.user,
-            course_id,
-            current_mode,
-            request.POST.get('processor')
-        )
-    else:
-        payment_data = checkout_with_shoppingcart(request, request.user, course_id, current_mode, amount)
+    # if request.POST doesn't contain 'processor' then the service's default payment processor will be used.
+    payment_data = checkout_with_ecommerce_service(
+        request.user,
+        course_id,
+        current_mode,
+        request.POST.get('processor')
+    )
 
     if 'processor' not in request.POST:
         # (XCOM-214) To be removed after release.
@@ -900,7 +865,7 @@ class SubmitPhotosView(View):
 
         # Retrieve the image data
         # Validation ensures that we'll have a face image, but we may not have
-        # a photo ID image if this is a reverification.
+        # a photo ID image if this is a re-verification.
         face_image, photo_id_image, response = self._decode_image_data(
             params["face_image"], params.get("photo_id_image")
         )
@@ -993,7 +958,7 @@ class SubmitPhotosView(View):
             return HttpResponseBadRequest(_("No profile found for user"))
         except AccountValidationError:
             msg = _(
-                u"Name must be at least {min_length} characters long."
+                u"Name must be at least {min_length} character long."
             ).format(min_length=NAME_MIN_LENGTH)
             return HttpResponseBadRequest(msg)
 
@@ -1066,23 +1031,12 @@ class SubmitPhotosView(View):
         Send an email confirming that the user submitted photos
         for initial verification.
         """
+        lms_root_url = configuration_helpers.get_value('LMS_ROOT_URL', settings.LMS_ROOT_URL)
         context = {
-            'full_name': user.profile.name,
-            'platform_name': configuration_helpers.get_value("PLATFORM_NAME", settings.PLATFORM_NAME)
+            'user': user,
+            'dashboard_link': '{}{}'.format(lms_root_url, reverse('dashboard'))
         }
-
-        subject = _(u"{platform_name} ID Verification Photos Received").format(platform_name=context['platform_name'])
-        message = render_to_string('emails/photo_submission_confirmation.txt', context)
-        from_address = configuration_helpers.get_value('email_from_address', settings.DEFAULT_FROM_EMAIL)
-        to_address = user.email
-
-        try:
-            send_mail(subject, message, from_address, [to_address], fail_silently=False)
-        except:  # pylint: disable=bare-except
-            # We catch all exceptions and log them.
-            # It would be much, much worse to roll back the transaction due to an uncaught
-            # exception than to skip sending the notification email.
-            log.exception(u"Could not send notification email for initial verification for user %s", user.id)
+        return send_verification_confirmation_email(context)
 
     def _fire_event(self, user, event_name, parameters):
         """
@@ -1109,7 +1063,7 @@ def results_callback(request):
     body = request.body
 
     try:
-        body_dict = json.loads(body)
+        body_dict = json.loads(body.decode('utf-8'))
     except ValueError:
         log.exception(u"Invalid JSON received from Software Secure:\n\n{}\n".format(body))
         return HttpResponseBadRequest(u"Invalid JSON. Received:\n\n{}".format(body))
@@ -1135,7 +1089,7 @@ def results_callback(request):
     access_key = access_key_and_sig.split(":")[0]
 
     # This is what we should be doing...
-    #if not sig_valid:
+    # if not sig_valid:
     #    return HttpResponseBadRequest("Signature is invalid")
 
     # This is what we're doing until we can figure out why we disagree on sigs
@@ -1175,28 +1129,16 @@ def results_callback(request):
                                                                ).update(expiry_date=None, expiry_email_date=None)
         log.debug(u'Approving verification for {}'.format(receipt_id))
         attempt.approve()
-        status = u"approved"
-        expiry_date = datetime.date.today() + datetime.timedelta(
-            days=settings.VERIFY_STUDENT["DAYS_GOOD_FOR"]
-        )
-        verification_status_email_vars['expiry_date'] = expiry_date.strftime("%m/%d/%Y")
-        verification_status_email_vars['full_name'] = user.profile.name
-        subject = _(u"Your {platform_name} ID Verification Approved").format(
-            platform_name=settings.PLATFORM_NAME
-        )
-        context = {
-            'subject': subject,
-            'template': 'emails/passed_verification_email.txt',
-            'email': user.email,
-            'email_vars': verification_status_email_vars
-        }
-        send_verification_status_email.delay(context)
+
+        expiry_date = datetime.date.today() + datetime.timedelta(days=settings.VERIFY_STUDENT["DAYS_GOOD_FOR"])
+        email_context = {'user': user, 'expiry_date': expiry_date.strftime("%m/%d/%Y")}
+        send_verification_approved_email(context=email_context)
 
     elif result == "FAIL":
         log.debug(u"Denying verification for %s", receipt_id)
         attempt.deny(json.dumps(reason), error_code=error_code)
         status = "denied"
-        reverify_url = '{}{}'.format(settings.LMS_ROOT_URL, reverse("verify_student_reverify"))
+        reverify_url = '{}/id-verification'.format(settings.ACCOUNT_MICROFRONTEND_URL)
         verification_status_email_vars['reasons'] = reason
         verification_status_email_vars['reverify_url'] = reverify_url
         verification_status_email_vars['faq_url'] = settings.ID_VERIFICATION_SUPPORT_LINK
@@ -1225,6 +1167,43 @@ def results_callback(request):
     return HttpResponse("OK!")
 
 
+class VerificationStatusAPIView(APIView):
+    """
+    GET /verify_student/status/
+
+    Parameters: None
+
+    Returns:
+        200 OK
+        {
+            "status": String,
+            "expires": String,
+            "can_verify": Boolean
+        }
+
+    Notes:
+        * "status" is a verification status string, or "none" if there is none.
+        * Verification should be allowed if and only if "can_verify" is true.
+        * If there is a current verification, then "expires" is a ISO datetime string.
+        * Otherwise, "expires" is omitted.
+    """
+    @method_decorator(login_required)
+    def get(self, request):
+        """
+        Handle the GET request.
+        """
+        verification_status = IDVerificationService.user_status(request.user)
+        expiration_datetime = IDVerificationService.get_expiration_datetime(request.user, ['approved'])
+        can_verify = can_verify_now(verification_status, expiration_datetime)
+        data = {
+            'status': verification_status['status'],
+            'can_verify': can_verify,
+        }
+        if expiration_datetime:
+            data['expires'] = expiration_datetime
+        return Response(data)
+
+
 class ReverifyView(View):
     """
     Reverification occurs when a user's initial verification is denied
@@ -1237,6 +1216,7 @@ class ReverifyView(View):
     the user submitted during initial verification.
 
     """
+
     @method_decorator(login_required)
     def get(self, request):
         """
@@ -1246,23 +1226,10 @@ class ReverifyView(View):
         Backbone views used in the initial verification flow.
         """
         verification_status = IDVerificationService.user_status(request.user)
-
         expiration_datetime = IDVerificationService.get_expiration_datetime(request.user, ['approved'])
-        can_reverify = False
-        if expiration_datetime:
-            if is_verification_expiring_soon(expiration_datetime):
-                # The user has an active verification, but the verification
-                # is set to expire within "EXPIRING_SOON_WINDOW" days (default is 4 weeks).
-                # In this case user can resubmit photos for reverification.
-                can_reverify = True
-
-        # If the user has no initial verification or if the verification
-        # process is still ongoing 'pending' or expired then allow the user to
-        # submit the photo verification.
-        # A photo verification is marked as 'pending' if its status is either
-        # 'submitted' or 'must_retry'.
-
-        if verification_status['status'] in ["none", "must_reverify", "expired", "pending"] or can_reverify:
+        if can_verify_now(verification_status, expiration_datetime):
+            if redirect_to_idv_microfrontend():
+                return redirect('{}/id-verification'.format(settings.ACCOUNT_MICROFRONTEND_URL))
             context = {
                 "user_full_name": request.user.profile.name,
                 "platform_name": configuration_helpers.get_value('PLATFORM_NAME', settings.PLATFORM_NAME),

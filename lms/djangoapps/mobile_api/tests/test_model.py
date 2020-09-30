@@ -1,6 +1,8 @@
 """
 Tests for Mobile API Configuration Models
 """
+
+
 from datetime import datetime
 
 import ddt

@@ -1,9 +1,9 @@
 {% extends "main_django.html" %}
 {% with online_help_token="wiki" %}
-{% load theme_pipeline %}{% load sekizai_tags i18n configuration %}{% load staticfiles %}
+{% load theme_pipeline %}{% load sekizai_tags i18n configuration %}{% load static %}
 
 {% block title %}
-  {% block pagetitle %}{% endblock %} | {% trans "Wiki" %} | {% platform_name %}
+  {% block pagetitle %}{% endblock %} | {% trans "Wiki" as tmsg%}{{tmsg|force_escape}} | {% platform_name %}
 {% endblock %}
 
 {% block bodyclass %}view-in-course view-wiki{% endblock %}

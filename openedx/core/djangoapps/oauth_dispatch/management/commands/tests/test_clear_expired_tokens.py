@@ -1,3 +1,8 @@
+"""
+Tests the ``edx_clear_expired_tokens`` management command.
+"""
+
+
 import unittest
 from datetime import timedelta
 

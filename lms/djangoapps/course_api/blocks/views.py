@@ -1,8 +1,13 @@
 """
 CourseBlocks API views
 """
+
+
+import six
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.http import Http404
+from django.utils.decorators import method_decorator
 from opaque_keys import InvalidKeyError
 from opaque_keys.edx.keys import CourseKey
 from rest_framework.generics import ListAPIView
@@ -18,6 +23,7 @@ from .forms import BlockListGetForm
 
 
 @view_auth_classes()
+@method_decorator(transaction.non_atomic_requests, name='dispatch')
 class BlocksView(DeveloperErrorViewMixin, ListAPIView):
     """
     **Use Case**
@@ -181,6 +187,10 @@ class BlocksView(DeveloperErrorViewMixin, ListAPIView):
 
           * show_correctness: Whether to show scores/correctness to learners for the current sequence or problem.
             Returned only if "show_correctness" is included in the "requested_fields" parameter.
+
+          * Additional XBlock fields can be included in the response if they are
+            configured via the COURSE_BLOCKS_API_EXTRA_FIELDS Django setting and
+            requested via the "requested_fields" parameter.
     """
 
     def list(self, request, usage_key_string, hide_access_denials=False):  # pylint: disable=arguments-differ
@@ -280,5 +290,5 @@ class BlocksInCourseView(BlocksView):
             course_key = CourseKey.from_string(course_key_string)
             course_usage_key = modulestore().make_course_usage_key(course_key)
         except InvalidKeyError:
-            raise ValidationError(u"'{}' is not a valid course key.".format(unicode(course_key_string)))
+            raise ValidationError(u"'{}' is not a valid course key.".format(six.text_type(course_key_string)))
         return super(BlocksInCourseView, self).list(request, course_usage_key, hide_access_denials=hide_access_denials)

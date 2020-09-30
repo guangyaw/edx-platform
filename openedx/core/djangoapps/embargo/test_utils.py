@@ -1,4 +1,5 @@
 """Utilities for writing unit tests that involve course embargos. """
+
 import contextlib
 
 import maxminddb

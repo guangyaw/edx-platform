@@ -3,28 +3,31 @@
 Contains code related to computing content gating course duration limits
 and course access based on these limits.
 """
+
+
 from datetime import timedelta
 
+import six
 from django.utils import timezone
-from django.utils.translation import get_language, ugettext as _
-
-from student.models import CourseEnrollment
-from util.date_utils import strftime_localized
+from django.utils.translation import get_language
+from django.utils.translation import ugettext as _
+from edx_django_utils.cache import RequestCache
+from web_fragments.fragment import Fragment
 
 from course_modes.models import CourseMode
 from lms.djangoapps.courseware.access_response import AccessError
 from lms.djangoapps.courseware.access_utils import ACCESS_GRANTED
-from lms.djangoapps.courseware.date_summary import verified_upgrade_deadline_link
+from lms.djangoapps.courseware.utils import verified_upgrade_deadline_link
 from lms.djangoapps.courseware.masquerade import get_course_masquerade, is_masquerading_as_specific_student
 from openedx.core.djangoapps.catalog.utils import get_course_run_details
 from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
+from openedx.core.djangoapps.course_date_signals.utils import get_expected_duration
 from openedx.core.djangolib.markup import HTML
 from openedx.features.course_duration_limits.models import CourseDurationLimitConfig
-from web_fragments.fragment import Fragment
+from student.models import CourseEnrollment
+from util.date_utils import strftime_localized
 
-MIN_DURATION = timedelta(weeks=4)
-MAX_DURATION = timedelta(weeks=18)
-EXPIRATION_DATE_FORMAT_STR = u'%b. %-d, %Y'
+EXPIRATION_DATE_FORMAT_STR = u'%b %-d, %Y'
 
 
 class AuditExpiredError(AccessError):
@@ -34,7 +37,6 @@ class AuditExpiredError(AccessError):
     def __init__(self, user, course, expiration_date):
         error_code = "audit_expired"
         developer_message = u"User {} had access to {} until {}".format(user, course, expiration_date)
-        language = get_language()
         expiration_date = strftime_localized(expiration_date, EXPIRATION_DATE_FORMAT_STR)
         user_message = _(u"Access expired on {expiration_date}").format(expiration_date=expiration_date)
         try:
@@ -52,6 +54,26 @@ class AuditExpiredError(AccessError):
                                                 additional_context_user_message)
 
 
+def get_user_course_duration(user, course):
+    """
+    Return a timedelta measuring the duration of the course for a particular user.
+
+    Business Logic:
+      - Course access duration is bounded by the min and max duration.
+      - If course fields are missing, default course access duration to MIN_DURATION.
+    """
+
+    enrollment = CourseEnrollment.get_enrollment(user, course.id)
+    if enrollment is None or enrollment.mode != CourseMode.AUDIT:
+        return None
+
+    verified_mode = CourseMode.verified_mode_for_course(course=course, include_expired=True)
+    if not verified_mode:
+        return None
+
+    return get_expected_duration(course)
+
+
 def get_user_course_expiration_date(user, course):
     """
     Return expiration date for given user course pair.
@@ -61,42 +83,18 @@ def get_user_course_expiration_date(user, course):
       - Course access duration is bounded by the min and max duration.
       - If course fields are missing, default course access duration to MIN_DURATION.
     """
-    access_duration = MIN_DURATION
-
-    verified_mode = CourseMode.verified_mode_for_course(course=course, include_expired=True)
-
-    if not verified_mode:
+    access_duration = get_user_course_duration(user, course)
+    if access_duration is None:
         return None
 
     enrollment = CourseEnrollment.get_enrollment(user, course.id)
     if enrollment is None or enrollment.mode != CourseMode.AUDIT:
         return None
 
-    try:
-        # Content availability date is equivalent to max(enrollment date, course start date)
-        # for most people. Using the schedule date will provide flexibility to deal with
-        # more complex business rules in the future.
-        content_availability_date = enrollment.schedule.start
-        # We have anecdotally observed a case where the schedule.start was
-        # equal to the course start, but should have been equal to the enrollment start
-        # https://openedx.atlassian.net/browse/PROD-58
-        # This section is meant to address that case
-        if enrollment.created and course.start:
-            if (content_availability_date.date() == course.start.date() and
-               course.start < enrollment.created < timezone.now()):
-                content_availability_date = enrollment.created
-    except CourseEnrollment.schedule.RelatedObjectDoesNotExist:
-        content_availability_date = max(enrollment.created, course.start)
-
-    # The user course expiration date is the content availability date
-    # plus the weeks_to_complete field from course-discovery.
-    discovery_course_details = get_course_run_details(course.id, ['weeks_to_complete'])
-    expected_weeks = discovery_course_details.get('weeks_to_complete')
-    if expected_weeks:
-        access_duration = timedelta(weeks=expected_weeks)
-
-    # Course access duration is bounded by the min and max duration.
-    access_duration = max(MIN_DURATION, min(MAX_DURATION, access_duration))
+    # We reset schedule.start in order to change a user's computed deadlines.
+    # But their expiration date shouldn't change when we adjust their schedule (they don't
+    # get additional time), so we need to based the expiration date on a fixed start date.
+    content_availability_date = max(enrollment.created, course.start)
 
     return content_availability_date + access_duration
 
@@ -109,7 +107,7 @@ def check_course_expired(user, course):
     if get_course_masquerade(user, course.id):
         return ACCESS_GRANTED
 
-    if not CourseDurationLimitConfig.enabled_for_enrollment(user=user, course_key=course.id):
+    if not CourseDurationLimitConfig.enabled_for_enrollment(user, course):
         return ACCESS_GRANTED
 
     expiration_date = get_user_course_expiration_date(user, course)
@@ -129,7 +127,7 @@ def generate_course_expired_message(user, course):
     """
     Generate the message for the user course expiration date if it exists.
     """
-    if not CourseDurationLimitConfig.enabled_for_enrollment(user=user, course_key=course.id):
+    if not CourseDurationLimitConfig.enabled_for_enrollment(user, course):
         return
 
     expiration_date = get_user_course_expiration_date(user, course)
@@ -170,18 +168,18 @@ def generate_course_expired_message(user, course):
         date_string = get_date_string()
         formatted_expiration_date = date_string.format(
             language=language,
-            formatted_date=expiration_date.strftime(EXPIRATION_DATE_FORMAT_STR),
+            formatted_date=expiration_date.strftime("%Y-%m-%d"),
             formatted_date_localized=strftime_localized(expiration_date, EXPIRATION_DATE_FORMAT_STR)
         )
         if using_upgrade_messaging:
             formatted_upgrade_deadline = date_string.format(
                 language=language,
-                formatted_date=upgrade_deadline.strftime(EXPIRATION_DATE_FORMAT_STR),
+                formatted_date=upgrade_deadline.strftime("%Y-%m-%d"),
                 formatted_date_localized=strftime_localized(upgrade_deadline, EXPIRATION_DATE_FORMAT_STR)
             )
 
             return HTML(full_message).format(
-                a_open=HTML(u'<a href="{upgrade_link}">').format(
+                a_open=HTML(u'<a id="FBE_banner" href="{upgrade_link}">').format(
                     upgrade_link=verified_upgrade_deadline_link(user=user, course=course)
                 ),
                 sronly_span_open=HTML('<span class="sr-only">'),
@@ -207,9 +205,40 @@ def generate_course_expired_message(user, course):
 def generate_course_expired_fragment(user, course):
     message = generate_course_expired_message(user, course)
     if message:
-        return Fragment(HTML(u"""\
+        return generate_fragment_from_message(message)
+
+
+def generate_fragment_from_message(message):
+    return Fragment(HTML(u"""\
             <div class="course-expiration-message">{}</div>
         """).format(message))
+
+
+def generate_course_expired_fragment_from_key(user, course_key):
+    """
+    Like `generate_course_expired_fragment`, but using a CourseKey instead of
+    a CourseOverview and using request-level caching.
+
+    Either returns WebFragment to inject XBlock content into, or None if we
+    shouldn't show a course expired message for this user.
+    """
+    request_cache = RequestCache('generate_course_expired_fragment_from_key')
+    cache_key = u'message:{},{}'.format(user.id, course_key)
+    cache_response = request_cache.get_cached_response(cache_key)
+    if cache_response.is_found:
+        cached_message = cache_response.value
+        # In this case, there is no message to display.
+        if cached_message is None:
+            return None
+        return generate_fragment_from_message(cached_message)
+
+    course = CourseOverview.get_from_id(course_key)
+    message = generate_course_expired_message(user, course)
+    request_cache.set(cache_key, message)
+    if message is None:
+        return None
+
+    return generate_fragment_from_message(message)
 
 
 def course_expiration_wrapper(user, block, view, frag, context):  # pylint: disable=W0613
@@ -220,16 +249,16 @@ def course_expiration_wrapper(user, block, view, frag, context):  # pylint: disa
     if block.category != "vertical":
         return frag
 
-    course = CourseOverview.get_from_id(block.course_id)
-    course_expiration_fragment = generate_course_expired_fragment(user, course)
-
+    course_expiration_fragment = generate_course_expired_fragment_from_key(
+        user, block.course_id
+    )
     if not course_expiration_fragment:
         return frag
 
     # Course content must be escaped to render correctly due to the way the
     # way the XBlock rendering works. Transforming the safe markup to unicode
     # escapes correctly.
-    course_expiration_fragment.content = unicode(course_expiration_fragment.content)
+    course_expiration_fragment.content = six.text_type(course_expiration_fragment.content)
 
     course_expiration_fragment.add_content(frag.content)
     course_expiration_fragment.add_fragment_resources(frag)

@@ -2,7 +2,7 @@
 """
 Discussion XBlock
 """
-from __future__ import absolute_import
+
 import logging
 import six
 from six.moves import urllib
@@ -161,7 +161,7 @@ class DiscussionXBlock(XBlock, StudioEditableXBlockMixin, XmlParserMixin):
         :rtype: bool
         """
         # normal import causes the xmodule_assets command to fail due to circular import - hence importing locally
-        from django_comment_client.permissions import has_permission
+        from lms.djangoapps.discussion.django_comment_client.permissions import has_permission
 
         return has_permission(self.django_user, permission, self.course_key)
 
@@ -263,6 +263,8 @@ class DiscussionXBlock(XBlock, StudioEditableXBlockMixin, XmlParserMixin):
         """
         Attempt to load definition XML from "discussion" folder in OLX, than parse it and update block fields
         """
+        if node.get('url_name') is None:
+            return  # Newer/XBlock XML format - no need to load an additional file.
         try:
             definition_xml, _ = cls.load_definition_xml(node, runtime, block.scope_ids.def_id)
         except Exception as err:  # pylint: disable=broad-except

@@ -2,6 +2,8 @@
 Template tags and helper functions for displaying breadcrumbs in page titles
 based on the current site.
 """
+
+
 from django import template
 from django.conf import settings
 from django.templatetags.static import static

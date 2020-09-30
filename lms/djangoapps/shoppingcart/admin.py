@@ -1,4 +1,6 @@
 """Django admin interface for the shopping cart models. """
+
+
 from django.contrib import admin
 
 from shoppingcart.models import (
@@ -31,7 +33,8 @@ class SoftDeleteCouponAdmin(admin.ModelAdmin):
 
     def get_actions(self, request):
         actions = super(SoftDeleteCouponAdmin, self).get_actions(request)
-        del actions['delete_selected']
+        if 'delete_selected' in actions:
+            del actions['delete_selected']
         return actions
 
     def really_delete_selected(self, request, queryset):
@@ -69,7 +72,7 @@ class CourseRegistrationCodeInvoiceItemInline(admin.StackedInline):
         'course_id',
     )
 
-    def has_add_permission(self, request):
+    def has_add_permission(self, request, obj=None):
         return False
 
 

@@ -1,4 +1,5 @@
 """
+WARNING! track.tracker module is deprecated please use eventtracking app to track events
 Module that tracks analytics events by sending them to different
 configurable backends.
 
@@ -18,9 +19,12 @@ below::
 
 """
 
+
 import inspect
+import warnings
 from importlib import import_module
 
+import six
 from django.conf import settings
 
 from track.backends import BaseBackend
@@ -41,7 +45,7 @@ def _initialize_backends_from_django_settings():
 
     config = getattr(settings, 'TRACKING_BACKENDS', {})
 
-    for name, values in config.iteritems():
+    for name, values in six.iteritems(config):
         # Ignore empty values to turn-off default tracker backends
         if values:
             engine = values['ENGINE']
@@ -85,8 +89,10 @@ def send(event):
     Send an event object to all the initialized backends.
 
     """
-
-    for name, backend in backends.iteritems():
+    warnings.warn(
+        'track.tracker module is deprecated. Please use eventtracking to send events.', DeprecationWarning
+    )
+    for name, backend in six.iteritems(backends):
         backend.send(event)
 
 

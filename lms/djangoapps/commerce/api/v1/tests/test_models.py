@@ -1,4 +1,6 @@
 """ Tests for models. """
+
+
 import ddt
 from django.test import TestCase
 

@@ -5,23 +5,23 @@ StackedConfigurationModel: A ConfigurationModel that can be overridden at site, 
 """
 
 # -*- coding: utf-8 -*-
-from __future__ import unicode_literals
+
 
 from collections import defaultdict
 from enum import Enum
 
+import crum
+from config_models.models import ConfigurationModel, cache
 from django.conf import settings
-from django.db import models
-from django.db.models import Q, F
 from django.contrib.sites.models import Site
 from django.contrib.sites.requests import RequestSite
 from django.core.exceptions import ValidationError
+from django.db import models
+from django.db.models import Q
 from django.utils.translation import ugettext_lazy as _
-import crum
 
-from config_models.models import ConfigurationModel, cache
-from openedx.core.djangoapps.site_configuration.models import SiteConfiguration
 from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
+from openedx.core.djangoapps.site_configuration.models import SiteConfiguration
 from openedx.core.lib.cache_utils import request_cached
 
 
@@ -183,19 +183,20 @@ class StackedConfigurationModel(ConfigurationModel):
 
         values = field_defaults.copy()
 
-        global_override_q = Q(site=None, org=None, org_course=None, course_id=None)
-        site_override_q = Q(site=site, org=None, org_course=None, course_id=None)
-        org_override_q = Q(site=None, org=org, org_course=None, course_id=None)
-        org_course_override_q = Q(site=None, org=None, org_course=org_course, course_id=None)
-        course_override_q = Q(site=None, org=None, org_course=None, course_id=course_key)
+        # Build a multi_filter_query that defaults to querying for the global-level setting and adds queries
+        # for the stacked-level settings when applicable.
+        # Note: Django2+ requires checking for 'isnull' rather than passing 'None' in the queries.
+        multi_filter_query = Q(site__isnull=True, org__isnull=True, org_course__isnull=True, course_id__isnull=True)
+        if site:
+            multi_filter_query |= Q(site=site, org__isnull=True, org_course__isnull=True, course_id__isnull=True)
+        if org:
+            multi_filter_query |= Q(site__isnull=True, org=org, org_course__isnull=True, course_id__isnull=True)
+        if org_course:
+            multi_filter_query |= Q(site__isnull=True, org__isnull=True, org_course=org_course, course_id__isnull=True)
+        if course_key:
+            multi_filter_query |= Q(site__isnull=True, org__isnull=True, org_course__isnull=True, course_id=course_key)
 
-        overrides = cls.objects.current_set().filter(
-            global_override_q |
-            site_override_q |
-            org_override_q |
-            org_course_override_q |
-            course_override_q
-        )
+        overrides = cls.objects.current_set().filter(multi_filter_query)
 
         provenances = defaultdict(lambda: Provenance.default)
         # We are sorting in python to avoid doing a filesort in the database for
@@ -244,7 +245,7 @@ class StackedConfigurationModel(ConfigurationModel):
         """
         all_courses = CourseOverview.objects.all()
         all_site_configs = SiteConfiguration.objects.filter(
-            values__contains='course_org_filter', enabled=True
+            site_values__contains='course_org_filter', enabled=True
         ).select_related('site')
 
         try:
@@ -254,7 +255,7 @@ class StackedConfigurationModel(ConfigurationModel):
 
         sites_by_org = defaultdict(lambda: default_site)
         site_cfg_org_filters = (
-            (site_cfg.site, site_cfg.values['course_org_filter'])
+            (site_cfg.site, site_cfg.site_values['course_org_filter'])
             for site_cfg in all_site_configs
         )
         sites_by_org.update({

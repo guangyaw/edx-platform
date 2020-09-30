@@ -1,6 +1,7 @@
 """
 Tests for EmbargoMiddleware
 """
+
 from contextlib import contextmanager
 
 import geoip2.database

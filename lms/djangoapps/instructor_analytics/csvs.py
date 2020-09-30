@@ -4,8 +4,11 @@ Student and course analytics.
 Format and create csv responses
 """
 
+
 import csv
 
+import six
+from six.moves import map
 from django.http import HttpResponse
 
 
@@ -28,11 +31,11 @@ def create_csv_response(filename, header, datarows):
         quotechar='"',
         quoting=csv.QUOTE_ALL)
 
-    encoded_header = [unicode(s).encode('utf-8') for s in header]
+    encoded_header = [six.text_type(s) for s in header]
     csvwriter.writerow(encoded_header)
 
     for datarow in datarows:
-        encoded_row = [unicode(s).encode('utf-8') for s in datarow]
+        encoded_row = [six.text_type(s) for s in datarow]
         csvwriter.writerow(encoded_row)
 
     return response
@@ -79,7 +82,7 @@ def format_dictlist(dictlist, features):
         return vals
 
     header = features
-    datarows = map(dict_to_entry, dictlist)
+    datarows = list(map(dict_to_entry, dictlist))
 
     return header, datarows
 

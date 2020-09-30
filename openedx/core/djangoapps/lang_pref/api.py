@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """ Python API for language and translation management. """
 
+
 from collections import namedtuple
 
 from django.conf import settings
 from django.utils.translation import ugettext as _
-
 from openedx.core.djangoapps.dark_lang.models import DarkLangConfig
 from openedx.core.djangoapps.site_configuration.helpers import get_value
 

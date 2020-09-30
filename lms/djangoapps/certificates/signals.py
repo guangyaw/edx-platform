@@ -1,29 +1,33 @@
 """
 Signal handler for enabling/disabling self-generated certificates based on the course-pacing.
 """
+
+
 import logging
 
+import six
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 
+from course_modes.models import CourseMode
 from lms.djangoapps.certificates.models import (
     CertificateGenerationCourseSetting,
+    CertificateStatuses,
     CertificateWhitelist,
-    GeneratedCertificate,
-    CertificateStatuses
+    GeneratedCertificate
 )
 from lms.djangoapps.certificates.tasks import generate_certificate
-from lms.djangoapps.grades.course_grade_factory import CourseGradeFactory
+from lms.djangoapps.grades.api import CourseGradeFactory
 from lms.djangoapps.verify_student.services import IDVerificationService
 from openedx.core.djangoapps.certificates.api import auto_certificate_generation_enabled
 from openedx.core.djangoapps.content.course_overviews.models import CourseOverview
 from openedx.core.djangoapps.content.course_overviews.signals import COURSE_PACING_CHANGED
-from openedx.core.djangoapps.signals.signals import (COURSE_GRADE_NOW_PASSED,
-                                                     LEARNER_NOW_VERIFIED,
-                                                     COURSE_GRADE_NOW_FAILED)
-from course_modes.models import CourseMode
+from openedx.core.djangoapps.signals.signals import (
+    COURSE_GRADE_NOW_FAILED,
+    COURSE_GRADE_NOW_PASSED,
+    LEARNER_NOW_VERIFIED
+)
 from student.models import CourseEnrollment
-
 
 log = logging.getLogger(__name__)
 CERTIFICATE_DELAY_SECONDS = 2
@@ -58,7 +62,7 @@ def _listen_for_certificate_whitelist_append(sender, instance, **kwargs):  # pyl
 
 
 @receiver(COURSE_GRADE_NOW_PASSED, dispatch_uid="new_passing_learner")
-def _listen_for_passing_grade(sender, user, course_id, **kwargs):  # pylint: disable=unused-argument
+def listen_for_passing_grade(sender, user, course_id, **kwargs):  # pylint: disable=unused-argument
     """
     Listen for a learner passing a course, send cert generation task,
     downstream signal from COURSE_GRADE_CHANGED
@@ -102,6 +106,7 @@ def _listen_for_id_verification_status_changed(sender, user, **kwargs):  # pylin
         return
 
     user_enrollments = CourseEnrollment.enrollments_for_user(user=user)
+
     grade_factory = CourseGradeFactory()
     expected_verification_status = IDVerificationService.user_status(user)
     expected_verification_status = expected_verification_status['status']
@@ -141,6 +146,9 @@ def fire_ungenerated_certificate_task(user, course_key, expected_verification_st
     traffic to workers.
     """
 
+    message = u'Entered into Ungenerated Certificate task for {user} : {course}'
+    log.info(message.format(user=user.id, course=course_key))
+
     allowed_enrollment_modes_list = [
         CourseMode.VERIFIED,
         CourseMode.CREDIT_MODE,
@@ -157,10 +165,13 @@ def fire_ungenerated_certificate_task(user, course_key, expected_verification_st
 
     if generate_learner_certificate:
         kwargs = {
-            'student': unicode(user.id),
-            'course_key': unicode(course_key)
+            'student': six.text_type(user.id),
+            'course_key': six.text_type(course_key)
         }
         if expected_verification_status:
-            kwargs['expected_verification_status'] = unicode(expected_verification_status)
+            kwargs['expected_verification_status'] = six.text_type(expected_verification_status)
         generate_certificate.apply_async(countdown=CERTIFICATE_DELAY_SECONDS, kwargs=kwargs)
         return True
+
+    message = u'Certificate Generation task failed for {user} : {course}'
+    log.info(message.format(user=user.id, course=course_key))

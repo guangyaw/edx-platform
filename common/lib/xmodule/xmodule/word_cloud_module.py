@@ -6,17 +6,28 @@ If student does not yet answered - `num_inputs` numbers of text inputs.
 If student have answered - words he entered and cloud.
 """
 
+
 import json
 import logging
 
 from pkg_resources import resource_string
+
+import six
+from six.moves import map
 from web_fragments.fragment import Fragment
 from xblock.fields import Boolean, Dict, Integer, List, Scope, String
-
-from xmodule.editing_module import MetadataOnlyEditingDescriptor
-from xmodule.raw_module import EmptyDataRawDescriptor
-from xmodule.x_module import XModule
-
+from xmodule.editing_module import EditingMixin
+from xmodule.raw_module import EmptyDataRawMixin
+from xmodule.util.xmodule_django import add_webpack_to_fragment
+from xmodule.xml_module import XmlMixin
+from xmodule.x_module import (
+    HTMLSnippet,
+    ResourceTemplates,
+    shim_xmodule_js,
+    XModuleMixin,
+    XModuleDescriptorToXBlockMixin,
+    XModuleToXBlockMixin,
+)
 log = logging.getLogger(__name__)
 
 # Make '_' a no-op so we can scrape strings. Using lambda instead of
@@ -34,8 +45,20 @@ def pretty_bool(value):
     return value in bool_dict
 
 
-class WordCloudFields(object):
-    """XFields for word cloud."""
+class WordCloudBlock(  # pylint: disable=abstract-method
+    EmptyDataRawMixin,
+    XmlMixin,
+    EditingMixin,
+    XModuleDescriptorToXBlockMixin,
+    XModuleToXBlockMixin,
+    HTMLSnippet,
+    ResourceTemplates,
+    XModuleMixin,
+):
+    """
+    Word Cloud XBlock.
+    """
+
     display_name = String(
         display_name=_("Display Name"),
         help=_("The display name for this component."),
@@ -88,17 +111,37 @@ class WordCloudFields(object):
         scope=Scope.user_state_summary
     )
 
+    resources_dir = 'assets/word_cloud'
+    template_dir_name = 'word_cloud'
 
-class WordCloudModule(WordCloudFields, XModule):
-    """WordCloud Xmodule"""
-    js = {'js': [resource_string(__name__, 'assets/word_cloud/src/js/word_cloud.js')]}
-    css = {'scss': [resource_string(__name__, 'css/word_cloud/display.scss')]}
-    js_module_name = "WordCloud"
+    preview_view_js = {
+        'js': [
+            resource_string(__name__, 'assets/word_cloud/src/js/word_cloud.js'),
+        ],
+        'xmodule_js': resource_string(__name__, 'js/src/xmodule.js'),
+    }
+    preview_view_css = {
+        'scss': [
+            resource_string(__name__, 'css/word_cloud/display.scss'),
+        ],
+    }
+
+    studio_view_js = {
+        'js': [
+            resource_string(__name__, 'js/src/raw/edit/metadata-only.js'),
+        ],
+        'xmodule_js': resource_string(__name__, 'js/src/xmodule.js'),
+    }
+    studio_view_css = {
+        'scss': [],
+    }
+    studio_js_module_name = "MetadataOnlyEditingDescriptor"
+    mako_template = "widgets/metadata-only-edit.html"
 
     def get_state(self):
         """Return success json answer for client."""
         if self.submitted:
-            total_count = sum(self.all_words.itervalues())
+            total_count = sum(six.itervalues(self.all_words))
             return json.dumps({
                 'status': 'success',
                 'submitted': True,
@@ -144,11 +187,12 @@ class WordCloudModule(WordCloudFields, XModule):
         """
         list_to_return = []
         percents = 0
-        for num, word_tuple in enumerate(top_words.iteritems()):
+        sorted_top_words = sorted(top_words.items(), key=lambda x: x[0].lower())
+        for num, word_tuple in enumerate(sorted_top_words):
             if num == len(top_words) - 1:
                 percent = 100 - percents
             else:
-                percent = round(100.0 * word_tuple[1] / total_count)
+                percent = round((100.0 * word_tuple[1]) / total_count)
                 percents += percent
             list_to_return.append(
                 {
@@ -171,7 +215,7 @@ class WordCloudModule(WordCloudFields, XModule):
         """
         return dict(
             sorted(
-                dict_obj.items(),
+                list(dict_obj.items()),
                 key=lambda x: x[1],
                 reverse=True
             )[:amount]
@@ -197,7 +241,7 @@ class WordCloudModule(WordCloudFields, XModule):
             # Student words from client.
             # FIXME: we must use raw JSON, not a post data (multipart/form-data)
             raw_student_words = data.getall('student_words[]')
-            student_words = filter(None, map(self.good_word, raw_student_words))
+            student_words = [word for word in map(self.good_word, raw_student_words) if word]
 
             self.student_words = student_words
 
@@ -235,9 +279,8 @@ class WordCloudModule(WordCloudFields, XModule):
         Renders the output that a student will see.
         """
         fragment = Fragment()
-
         fragment.add_content(self.system.render_template('word_cloud.html', {
-            'ajax_url': self.system.ajax_url,
+            'ajax_url': self.ajax_url,
             'display_name': self.display_name,
             'instructions': self.instructions,
             'element_class': self.location.block_type,
@@ -245,6 +288,8 @@ class WordCloudModule(WordCloudFields, XModule):
             'num_inputs': self.num_inputs,
             'submitted': self.submitted,
         }))
+        add_webpack_to_fragment(fragment, 'WordCloudBlockPreview')
+        shim_xmodule_js(fragment, 'WordCloud')
 
         return fragment
 
@@ -254,9 +299,37 @@ class WordCloudModule(WordCloudFields, XModule):
         """
         return self.student_view(context)
 
+    def studio_view(self, _context):
+        """
+        Return the studio view.
+        """
+        fragment = Fragment(
+            self.system.render_template(self.mako_template, self.get_context())
+        )
+        add_webpack_to_fragment(fragment, 'WordCloudBlockStudio')
+        shim_xmodule_js(fragment, self.studio_js_module_name)
+        return fragment
 
-class WordCloudDescriptor(WordCloudFields, MetadataOnlyEditingDescriptor, EmptyDataRawDescriptor):
-    """Descriptor for WordCloud Xmodule."""
-    module_class = WordCloudModule
-    resources_dir = 'assets/word_cloud'
-    template_dir_name = 'word_cloud'
+    def index_dictionary(self):
+        """
+        Return dictionary prepared with module content and type for indexing.
+        """
+        # return key/value fields in a Python dict object
+        # values may be numeric / string or dict
+        # default implementation is an empty dict
+
+        xblock_body = super(WordCloudBlock, self).index_dictionary()
+
+        index_body = {
+            "display_name": self.display_name,
+            "instructions": self.instructions,
+        }
+
+        if "content" in xblock_body:
+            xblock_body["content"].update(index_body)
+        else:
+            xblock_body["content"] = index_body
+
+        xblock_body["content_type"] = "Word Cloud"
+
+        return xblock_body

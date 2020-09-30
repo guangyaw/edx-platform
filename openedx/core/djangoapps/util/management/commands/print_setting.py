@@ -9,7 +9,7 @@ Useful when paver or a shell script needs such a value.
 This handles the one specific use case of the "print_settings" command from
 django-extensions that we were actually using.
 """
-from __future__ import print_function
+
 
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
@@ -22,14 +22,15 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            'setting',
-            help='Specifies the setting to be printed.'
+            'settings_to_print',
+            nargs='+',
+            help='Specifies the list of settings to be printed.'
         )
 
     def handle(self, *args, **options):
-        setting = options.get('setting')
+        settings_to_print = options.get('settings_to_print')
 
-        if not hasattr(settings, setting):
-            raise CommandError(u'%s not found in settings.' % setting)
-
-        print(getattr(settings, setting))
+        for setting in settings_to_print:
+            if not hasattr(settings, setting):
+                raise CommandError('%s not found in settings.' % setting)
+            print(getattr(settings, setting))

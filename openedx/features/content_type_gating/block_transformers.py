@@ -2,11 +2,11 @@
 Content Type Gate Transformer implementation.
 Limits access for certain users to certain types of content.
 """
+
+
 from django.conf import settings
 
-from openedx.core.djangoapps.content.block_structure.transformer import (
-    BlockStructureTransformer,
-)
+from openedx.core.djangoapps.content.block_structure.transformer import BlockStructureTransformer
 from openedx.features.content_type_gating.helpers import CONTENT_GATING_PARTITION_ID
 from openedx.features.content_type_gating.models import ContentTypeGatingConfig
 
@@ -35,6 +35,19 @@ class ContentTypeGateTransformer(BlockStructureTransformer):
         """
         block_structure.request_xblock_fields('group_access', 'graded', 'has_score', 'weight')
 
+    def _set_contains_gated_content_on_parents(self, block_structure, block_key):
+        """
+        This will recursively set a field on all the parents of a block if one of the problems
+        inside of it is content gated. `contains_gated_content` can then be used to indicate something
+        in the blocks subtree is gated.
+        """
+        if block_structure.get_xblock_field(block_key, 'contains_gated_content'):
+            return
+        block_structure.override_xblock_field(block_key, 'contains_gated_content', True)
+
+        for parent_block_key in block_structure.get_parents(block_key):
+            self._set_contains_gated_content_on_parents(block_structure, parent_block_key)
+
     def transform(self, usage_info, block_structure):
         if not ContentTypeGatingConfig.enabled_for_enrollment(
             user=usage_info.user,
@@ -56,3 +69,5 @@ class ContentTypeGateTransformer(BlockStructureTransformer):
                     [settings.CONTENT_TYPE_GATE_GROUP_IDS['full_access']]
                 )
                 block_structure.override_xblock_field(block_key, 'group_access', current_access)
+                if current_access[CONTENT_GATING_PARTITION_ID] == [settings.CONTENT_TYPE_GATE_GROUP_IDS['full_access']]:
+                    self._set_contains_gated_content_on_parents(block_structure, block_key)

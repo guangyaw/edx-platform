@@ -2,69 +2,75 @@
 """
 Test for lms courseware app, module render unit
 """
+
+
 import itertools
 import json
+import textwrap
 from datetime import datetime
 from functools import partial
 
 import ddt
 import pytz
+import six
 from bson import ObjectId
-from completion.models import BlockCompletion
 from completion import waffle as completion_waffle
+from completion.models import BlockCompletion
 from django.conf import settings
 from django.contrib.auth.models import AnonymousUser
+from django.http import Http404, HttpResponse
 from django.middleware.csrf import get_token
 from django.test.client import RequestFactory
-from django.urls import reverse
-from django.http import Http404, HttpResponse
 from django.test.utils import override_settings
-from edx_oauth2_provider.tests.factories import AccessTokenFactory, ClientFactory
+from django.urls import reverse
 from edx_proctoring.api import create_exam, create_exam_attempt, update_attempt_status
 from edx_proctoring.runtime import set_runtime_service
-from edx_proctoring.tests.test_services import MockCreditService, MockGradesService, MockCertificateService
+from edx_proctoring.tests.test_services import MockCertificateService, MockCreditService, MockGradesService
+from edx_when.field_data import DateLookupFieldData
 from freezegun import freeze_time
 from milestones.tests.utils import MilestonesTestCaseMixin
 from mock import MagicMock, Mock, patch
 from opaque_keys.edx.asides import AsideUsageKeyV2
 from opaque_keys.edx.keys import CourseKey, UsageKey
-from openedx.core.djangoapps.oauth_dispatch.jwt import create_jwt_for_user
 from pyquery import PyQuery
 from six import text_type
+from six.moves import range
 from web_fragments.fragment import Fragment
 from xblock.completable import CompletableXBlockMixin
 from xblock.core import XBlock, XBlockAside
 from xblock.field_data import FieldData
 from xblock.fields import ScopeIds
-from xblock.runtime import (
-    DictKeyValueStore,
-    KvsFieldData,
-    Runtime
-)
+from xblock.runtime import DictKeyValueStore, KvsFieldData, Runtime
 from xblock.test.tools import TestRuntime
 
 from capa.tests.response_xml_factory import OptionResponseXMLFactory
 from course_modes.models import CourseMode
-from courseware import module_render as render
-from courseware.courses import get_course_info_section, get_course_with_access
-from courseware.access_response import AccessResponse
-from courseware.masquerade import CourseMasquerade
-from courseware.model_data import FieldDataCache
-from courseware.models import StudentModule
-from courseware.module_render import get_module_for_descriptor, hash_resource
-from courseware.tests.factories import GlobalStaffFactory, StudentModuleFactory, UserFactory, RequestFactoryNoCsrf
-from courseware.tests.test_submitting_problems import TestSubmittingProblems
-from courseware.tests.tests import LoginEnrollmentTestCase
-from lms.djangoapps.lms_xblock.field_data import LmsFieldData
+from lms.djangoapps.courseware import module_render as render
+from lms.djangoapps.courseware.access_response import AccessResponse
+from lms.djangoapps.courseware.courses import get_course_info_section, get_course_with_access
+from lms.djangoapps.courseware.masquerade import CourseMasquerade
+from lms.djangoapps.courseware.model_data import FieldDataCache
+from lms.djangoapps.courseware.models import StudentModule
+from lms.djangoapps.courseware.module_render import get_module_for_descriptor, hash_resource
+from lms.djangoapps.courseware.tests.factories import (
+    GlobalStaffFactory, RequestFactoryNoCsrf, StudentModuleFactory, UserFactory,
+)
+from lms.djangoapps.courseware.tests.test_submitting_problems import TestSubmittingProblems
+from lms.djangoapps.courseware.tests.tests import LoginEnrollmentTestCase
 from lms.djangoapps.courseware.field_overrides import OverrideFieldData
+from lms.djangoapps.lms_xblock.field_data import LmsFieldData
 from openedx.core.djangoapps.credit.api import set_credit_requirement_status, set_credit_requirements
 from openedx.core.djangoapps.credit.models import CreditCourse
+from openedx.core.djangoapps.oauth_dispatch.jwt import create_jwt_for_user
+from openedx.core.djangoapps.oauth_dispatch.tests.factories import ApplicationFactory, AccessTokenFactory
 from openedx.core.lib.courses import course_image_url
 from openedx.core.lib.gating import api as gating_api
 from openedx.core.lib.url_utils import quote_slashes
-from student.models import anonymous_id_for_user, CourseEnrollment
+from student.models import CourseEnrollment, anonymous_id_for_user
 from verify_student.tests.factories import SoftwareSecurePhotoVerificationFactory
 from xblock_django.models import XBlockConfiguration
+from xmodule.capa_module import ProblemBlock
+from xmodule.html_module import AboutBlock, CourseInfoBlock, HtmlBlock, StaticTabBlock
 from xmodule.lti_module import LTIDescriptor
 from xmodule.modulestore import ModuleStoreEnum
 from xmodule.modulestore.django import modulestore
@@ -75,6 +81,7 @@ from xmodule.modulestore.tests.django_utils import (
 )
 from xmodule.modulestore.tests.factories import CourseFactory, ItemFactory, ToyCourseFactory, check_mongo_calls
 from xmodule.modulestore.tests.test_asides import AsideTestType
+from xmodule.video_module import VideoBlock
 from xmodule.x_module import STUDENT_VIEW, CombinedSystem, XModule, XModuleDescriptor
 
 TEST_DATA_DIR = settings.COMMON_TEST_DATA_ROOT
@@ -260,7 +267,7 @@ class ModuleRenderTestCase(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         }
 
         # Patch getmodule to return our mock module
-        with patch('courseware.module_render.load_single_xblock', return_value=self.mock_module):
+        with patch('lms.djangoapps.courseware.module_render.load_single_xblock', return_value=self.mock_module):
             # call xqueue_callback with our mocked information
             request = self.request_factory.post(self.callback_url, data)
             render.xqueue_callback(
@@ -282,7 +289,7 @@ class ModuleRenderTestCase(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
             'xqueue_body': 'hello world',
         }
 
-        with patch('courseware.module_render.load_single_xblock', return_value=self.mock_module):
+        with patch('lms.djangoapps.courseware.module_render.load_single_xblock', return_value=self.mock_module):
             # Test with missing xqueue data
             with self.assertRaises(Http404):
                 request = self.request_factory.post(self.callback_url, {})
@@ -321,7 +328,7 @@ class ModuleRenderTestCase(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         """Test that anonymous GET is allowed."""
         dispatch_url = self._get_dispatch_url()
         response = self.client.get(dispatch_url)
-        self.assertEquals(200, response.status_code)
+        self.assertEqual(200, response.status_code)
 
     def test_anonymous_post_xblock_callback(self):
         """Test that anonymous POST is not allowed."""
@@ -329,8 +336,8 @@ class ModuleRenderTestCase(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         response = self.client.post(dispatch_url, {'position': 2})
 
         # https://openedx.atlassian.net/browse/LEARNER-7131
-        self.assertEquals('Unauthenticated', response.content)
-        self.assertEquals(403, response.status_code)
+        self.assertEqual('Unauthenticated', response.content.decode('utf-8'))
+        self.assertEqual(403, response.status_code)
 
     def test_session_authentication(self):
         """ Test that the xblock endpoint supports session authentication."""
@@ -342,7 +349,7 @@ class ModuleRenderTestCase(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
     def test_oauth_authentication(self):
         """ Test that the xblock endpoint supports OAuth authentication."""
         dispatch_url = self._get_dispatch_url()
-        access_token = AccessTokenFactory(user=self.mock_user, client=ClientFactory()).token
+        access_token = AccessTokenFactory(user=self.mock_user, application=ApplicationFactory()).token
         headers = {'HTTP_AUTHORIZATION': 'Bearer ' + access_token}
         response = self.client.post(dispatch_url, {}, **headers)
         self.assertEqual(200, response.status_code)
@@ -363,27 +370,27 @@ class ModuleRenderTestCase(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         dispatch_url = self._get_dispatch_url()
         response = self.client.post(dispatch_url)
         self.assertEqual(200, response.status_code)
-        self.assertEqual(json.loads(response.content), {'success': True})
+        self.assertEqual(json.loads(response.content.decode('utf-8')), {'success': True})
 
         response = self.client.post(dispatch_url, {'position': ''})
         self.assertEqual(200, response.status_code)
-        self.assertEqual(json.loads(response.content), {'success': True})
+        self.assertEqual(json.loads(response.content.decode('utf-8')), {'success': True})
 
         response = self.client.post(dispatch_url, {'position': '-1'})
         self.assertEqual(200, response.status_code)
-        self.assertEqual(json.loads(response.content), {'success': True})
+        self.assertEqual(json.loads(response.content.decode('utf-8')), {'success': True})
 
         response = self.client.post(dispatch_url, {'position': "string"})
         self.assertEqual(200, response.status_code)
-        self.assertEqual(json.loads(response.content), {'success': True})
+        self.assertEqual(json.loads(response.content.decode('utf-8')), {'success': True})
 
         response = self.client.post(dispatch_url, {'position': u"Φυσικά"})
         self.assertEqual(200, response.status_code)
-        self.assertEqual(json.loads(response.content), {'success': True})
+        self.assertEqual(json.loads(response.content.decode('utf-8')), {'success': True})
 
-        response = self.client.post(dispatch_url, {'position': None})
+        response = self.client.post(dispatch_url, {'position': ''})
         self.assertEqual(200, response.status_code)
-        self.assertEqual(json.loads(response.content), {'success': True})
+        self.assertEqual(json.loads(response.content.decode('utf-8')), {'success': True})
 
     @ddt.data('pure', 'vertical')
     @XBlock.register_temp_plugin(PureXBlock, identifier='pure')
@@ -490,10 +497,14 @@ class ModuleRenderTestCase(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
             OverrideFieldData
         )
 
-        # the OverrideFieldData should point to the original unwrapped field_data
-        self.assertIs(
+        # the OverrideFieldData should point to the date FieldData
+        self.assertIsInstance(
             # pylint: disable=protected-access
             descriptor._field_data._authored_data._source.fallback,
+            DateLookupFieldData
+        )
+        self.assertIs(
+            descriptor._field_data._authored_data._source.fallback._defaults,
             descriptor._unwrapped_field_data
         )
 
@@ -503,7 +514,7 @@ class ModuleRenderTestCase(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         decoded or otherwise.
         """
         resources = ['ASCII text', u'❄ I am a special snowflake.', "❄ So am I, but I didn't tell you."]
-        self.assertEqual(hash_resource(resources), 'a76e27c8e80ca3efd7ce743093aa59e0')
+        self.assertEqual(hash_resource(resources), '50c2ae79fbce9980e0803848914b0a09')
 
 
 @ddt.ddt
@@ -622,13 +633,13 @@ class TestHandleXBlockCallback(SharedModuleStoreTestCase, LoginEnrollmentTestCas
             data={'file_id': (self._mock_file(), ) * (settings.MAX_FILEUPLOADS_PER_INPUT + 1)}
         )
         request.user = self.mock_user
-        self.assertEquals(
+        self.assertEqual(
             render.handle_xblock_callback(
                 request,
                 text_type(self.course_key),
                 quote_slashes(text_type(self.location)),
                 'dummy_handler'
-            ).content,
+            ).content.decode('utf-8'),
             json.dumps({
                 'success': u'Submission aborted! Maximum %d files may be submitted at once' %
                            settings.MAX_FILEUPLOADS_PER_INPUT
@@ -642,13 +653,13 @@ class TestHandleXBlockCallback(SharedModuleStoreTestCase, LoginEnrollmentTestCas
             data={'file_id': inputfile}
         )
         request.user = self.mock_user
-        self.assertEquals(
+        self.assertEqual(
             render.handle_xblock_callback(
                 request,
                 text_type(self.course_key),
                 quote_slashes(text_type(self.location)),
                 'dummy_handler'
-            ).content,
+            ).content.decode('utf-8'),
             json.dumps({
                 'success': u'Submission aborted! Your file "%s" is too large (max size: %d MB)' %
                            (inputfile.name, settings.STUDENT_FILEUPLOAD_MAX_SIZE / (1000 ** 2))
@@ -734,13 +745,13 @@ class TestHandleXBlockCallback(SharedModuleStoreTestCase, LoginEnrollmentTestCas
             'set_score',
             '',
         )
-        self.assertEquals(response.status_code, 200)
+        self.assertEqual(response.status_code, 200)
         student_module = StudentModule.objects.get(
             student=self.mock_user,
             module_state_key=block.scope_ids.usage_id,
         )
-        self.assertEquals(student_module.grade, 0.75)
-        self.assertEquals(student_module.max_grade, 1)
+        self.assertEqual(student_module.grade, 0.75)
+        self.assertEqual(student_module.max_grade, 1)
 
     @ddt.data(
         ('complete', {'completion': 0.625}),
@@ -808,12 +819,12 @@ class TestHandleXBlockCallback(SharedModuleStoreTestCase, LoginEnrollmentTestCas
             )
 
         with patch(
-            'courseware.module_render.is_xblock_aside',
+            'lms.djangoapps.courseware.module_render.is_xblock_aside',
             return_value=is_xblock_aside
         ), patch(
-            'courseware.module_render.get_aside_from_xblock'
+            'lms.djangoapps.courseware.module_render.get_aside_from_xblock'
         ) as mocked_get_aside_from_xblock, patch(
-            "courseware.module_render.webob_to_django_response"
+            'lms.djangoapps.courseware.module_render.webob_to_django_response'
         ) as mocked_webob_to_django_response:
             render.handle_xblock_callback(
                 request,
@@ -890,7 +901,7 @@ class TestHandleXBlockCallback(SharedModuleStoreTestCase, LoginEnrollmentTestCas
             request.session = {}
             request.user.real_user = GlobalStaffFactory.create()
             request.user.real_user.masquerade_settings = CourseMasquerade(course.id, user_name="jem")
-            with patch('courseware.module_render.is_masquerading_as_specific_student') as mock_masq:
+            with patch('lms.djangoapps.courseware.module_render.is_masquerading_as_specific_student') as mock_masq:
                 mock_masq.return_value = True
                 response = render.handle_xblock_callback(
                     request,
@@ -903,6 +914,26 @@ class TestHandleXBlockCallback(SharedModuleStoreTestCase, LoginEnrollmentTestCas
         self.assertEqual(response.status_code, 200)
         with self.assertRaises(BlockCompletion.DoesNotExist):
             BlockCompletion.objects.get(block_key=block.scope_ids.usage_id)
+
+    @XBlock.register_temp_plugin(GradedStatelessXBlock, identifier='stateless_scorer')
+    @patch('lms.djangoapps.courseware.module_render.grades_signals.SCORE_PUBLISHED.send')
+    def test_anonymous_user_not_be_graded(self, mock_score_signal):
+        course = CourseFactory.create()
+        descriptor_kwargs = {
+            'category': 'problem',
+        }
+        request = self.request_factory.get('/')
+        request.user = AnonymousUser()
+        descriptor = ItemFactory.create(**descriptor_kwargs)
+
+        render.handle_xblock_callback(
+            request,
+            text_type(course.id),
+            quote_slashes(text_type(descriptor.location)),
+            'xmodule_handler',
+            'problem_check',
+        )
+        self.assertFalse(mock_score_signal.called)
 
 
 @ddt.ddt
@@ -930,14 +961,14 @@ class TestXBlockView(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         request = self.request_factory.get(self.xblock_view_url)
         request.user = UserFactory.create()
         response = render.xblock_view(request, *self.view_args)
-        self.assertEquals(200, response.status_code)
+        self.assertEqual(200, response.status_code)
 
         expected = ['csrf_token', 'html', 'resources']
-        content = json.loads(response.content)
+        content = json.loads(response.content.decode('utf-8'))
         for section in expected:
             self.assertIn(section, content)
         doc = PyQuery(content['html'])
-        self.assertEquals(len(doc('div.xblock-student_view-html')), 1)
+        self.assertEqual(len(doc('div.xblock-student_view-html')), 1)
 
     @ddt.data(True, False)
     def test_hide_staff_markup(self, hide):
@@ -951,21 +982,22 @@ class TestXBlockView(SharedModuleStoreTestCase, LoginEnrollmentTestCase):
         if hide:
             request.GET = {'hide_staff_markup': 'true'}
         response = render.xblock_view(request, *self.view_args)
-        self.assertEquals(200, response.status_code)
+        self.assertEqual(200, response.status_code)
 
-        html = json.loads(response.content)['html']
+        html = json.loads(response.content.decode('utf-8'))['html']
         self.assertEqual('Staff Debug Info' in html, not hide)
 
     def test_xblock_view_handler_not_authenticated(self):
         request = self.request_factory.get(self.xblock_view_url)
         request.user = AnonymousUser()
         response = render.xblock_view(request, *self.view_args)
-        self.assertEquals(401, response.status_code)
+        self.assertEqual(401, response.status_code)
 
 
 @ddt.ddt
 class TestTOC(ModuleStoreTestCase):
     """Check the Table of Contents for a course"""
+
     def setup_request_and_course(self, num_finds, num_sends):
         """
         Sets up the toy course in the modulestore and the request object.
@@ -988,14 +1020,12 @@ class TestTOC(ModuleStoreTestCase):
     #     - 1 for the course
     #     - 1 for its children
     #     - 1 for its grandchildren
-    # Split makes 6 queries to load the course to depth 2:
-    #     - load the structure
-    #     - load 5 definitions
-    # Split makes 5 queries to render the toc:
-    #     - it loads the active version at the start of the bulk operation
-    #     - it loads 4 definitions, because it instantiates 4 VideoModules
-    #       each of which access a Scope.content field in __init__
-    @ddt.data((ModuleStoreEnum.Type.mongo, 3, 0, 0), (ModuleStoreEnum.Type.split, 6, 0, 5))
+    # Split makes 2 queries to load the course to depth 2:
+    #     - 1 for the structure
+    #     - 1 for 5 definitions
+    # Split makes 1 query to render the toc:
+    #     - 1 for the active version at the start of the bulk operation
+    @ddt.data((ModuleStoreEnum.Type.mongo, 3, 0, 0), (ModuleStoreEnum.Type.split, 2, 0, 1))
     @ddt.unpack
     def test_toc_toy_from_chapter(self, default_ms, setup_finds, setup_sends, toc_finds):
         with self.store.default_store(default_ms):
@@ -1030,14 +1060,12 @@ class TestTOC(ModuleStoreTestCase):
     #     - 1 for the course
     #     - 1 for its children
     #     - 1 for its grandchildren
-    # Split makes 6 queries to load the course to depth 2:
-    #     - load the structure
-    #     - load 5 definitions
-    # Split makes 5 queries to render the toc:
-    #     - it loads the active version at the start of the bulk operation
-    #     - it loads 4 definitions, because it instantiates 4 VideoModules
-    #       each of which access a Scope.content field in __init__
-    @ddt.data((ModuleStoreEnum.Type.mongo, 3, 0, 0), (ModuleStoreEnum.Type.split, 6, 0, 5))
+    # Split makes 2 queries to load the course to depth 2:
+    #     - 1 for the structure
+    #     - 1 for 5 definitions
+    # Split makes 1 query to render the toc:
+    #     - 1 for the active version at the start of the bulk operation
+    @ddt.data((ModuleStoreEnum.Type.mongo, 3, 0, 0), (ModuleStoreEnum.Type.split, 2, 0, 1))
     @ddt.unpack
     def test_toc_toy_from_section(self, default_ms, setup_finds, setup_sends, toc_finds):
         with self.store.default_store(default_ms):
@@ -1064,19 +1092,19 @@ class TestTOC(ModuleStoreTestCase):
                 )
             for toc_section in expected:
                 self.assertIn(toc_section, actual['chapters'])
-            self.assertEquals(actual['previous_of_active_section']['url_name'], 'Toy_Videos')
-            self.assertEquals(actual['next_of_active_section']['url_name'], 'video_123456789012')
+            self.assertEqual(actual['previous_of_active_section']['url_name'], 'Toy_Videos')
+            self.assertEqual(actual['next_of_active_section']['url_name'], 'video_123456789012')
 
 
 @ddt.ddt
 @patch.dict('django.conf.settings.FEATURES', {'ENABLE_SPECIAL_EXAMS': True})
 class TestProctoringRendering(SharedModuleStoreTestCase):
+    """Check the Table of Contents for a course"""
     @classmethod
     def setUpClass(cls):
         super(TestProctoringRendering, cls).setUpClass()
         cls.course_key = ToyCourseFactory.create().id
 
-    """Check the Table of Contents for a course"""
     def setUp(self):
         """
         Set up the initial mongo datastores
@@ -1222,7 +1250,7 @@ class TestProctoringRendering(SharedModuleStoreTestCase):
             # we expect there not to be a 'proctoring' key in the dict
             self.assertNotIn('proctoring', section_actual)
         self.assertIsNone(actual['previous_of_active_section'])
-        self.assertEquals(actual['next_of_active_section']['url_name'], u"Welcome")
+        self.assertEqual(actual['next_of_active_section']['url_name'], u"Welcome")
 
     @ddt.data(
         (
@@ -1378,7 +1406,7 @@ class TestProctoringRendering(SharedModuleStoreTestCase):
         )
 
         if attempt_status:
-            create_exam_attempt(exam_id, self.request.user.id, taking_as_proctored=True)
+            create_exam_attempt(six.text_type(exam_id).encode('utf-8'), self.request.user.id, taking_as_proctored=True)
             update_attempt_status(exam_id, self.request.user.id, attempt_status)
 
         return usage_key
@@ -1407,6 +1435,10 @@ class TestProctoringRendering(SharedModuleStoreTestCase):
 
 
 class TestGatedSubsectionRendering(SharedModuleStoreTestCase, MilestonesTestCaseMixin):
+    """
+    Test the toc for a course is rendered correctly when there is gated content
+    """
+
     @classmethod
     def setUpClass(cls):
         super(TestGatedSubsectionRendering, cls).setUpClass()
@@ -1415,9 +1447,6 @@ class TestGatedSubsectionRendering(SharedModuleStoreTestCase, MilestonesTestCase
         cls.course.save()
         cls.store.update_item(cls.course, 0)
 
-    """
-    Test the toc for a course is rendered correctly when there is gated content
-    """
     def setUp(self):
         """
         Set up the initial test data
@@ -1494,6 +1523,7 @@ class TestHtmlModifiers(ModuleStoreTestCase):
     Tests to verify that standard modifications to the output of XModule/XBlock
     student_view are taking place
     """
+
     def setUp(self):
         super(TestHtmlModifiers, self).setUp()
         self.course = CourseFactory.create()
@@ -1525,7 +1555,7 @@ class TestHtmlModifiers(ModuleStoreTestCase):
         )
         result_fragment = module.render(STUDENT_VIEW)
 
-        self.assertEquals(len(PyQuery(result_fragment.content)('div.xblock.xblock-student_view.xmodule_HtmlModule')), 1)
+        self.assertEqual(len(PyQuery(result_fragment.content)('div.xblock.xblock-student_view.xmodule_HtmlBlock')), 1)
 
     def test_xmodule_display_wrapper_disabled(self):
         module = render.get_module(
@@ -1537,7 +1567,8 @@ class TestHtmlModifiers(ModuleStoreTestCase):
         )
         result_fragment = module.render(STUDENT_VIEW)
 
-        self.assertNotIn('div class="xblock xblock-student_view xmodule_display xmodule_HtmlModule"', result_fragment.content)
+        self.assertNotIn('div class="xblock xblock-student_view xmodule_display xmodule_HtmlBlock"',
+                         result_fragment.content)
 
     def test_static_link_rewrite(self):
         module = render.get_module(
@@ -1683,109 +1714,12 @@ class JsonInitDataTest(ModuleStoreTestCase):
         self.assertEqual(html.count("</script>"), 1)
 
 
-class ViewInStudioTest(ModuleStoreTestCase):
-    """Tests for the 'View in Studio' link visiblity."""
-
-    def setUp(self):
-        """ Set up the user and request that will be used. """
-        super(ViewInStudioTest, self).setUp()
-        self.staff_user = GlobalStaffFactory.create()
-        self.request = RequestFactoryNoCsrf().get('/')
-        self.request.user = self.staff_user
-        self.request.session = {}
-        self.module = None
-        self.default_context = {'bookmarked': False, 'username': self.user.username}
-
-    def _get_module(self, course_id, descriptor, location):
-        """
-        Get the module from the course from which to pattern match (or not) the 'View in Studio' buttons
-        """
-        field_data_cache = FieldDataCache.cache_for_descriptor_descendents(
-            course_id,
-            self.staff_user,
-            descriptor
-        )
-
-        return render.get_module(
-            self.staff_user,
-            self.request,
-            location,
-            field_data_cache,
-        )
-
-    def setup_mongo_course(self, course_edit_method='Studio'):
-        """ Create a mongo backed course. """
-        course = CourseFactory.create(
-            course_edit_method=course_edit_method
-        )
-
-        descriptor = ItemFactory.create(
-            category='vertical',
-            parent_location=course.location,
-        )
-
-        child_descriptor = ItemFactory.create(
-            category='vertical',
-            parent_location=descriptor.location
-        )
-
-        self.module = self._get_module(course.id, descriptor, descriptor.location)
-
-        # pylint: disable=attribute-defined-outside-init
-        self.child_module = self._get_module(course.id, child_descriptor, child_descriptor.location)
-
-
-class MongoViewInStudioTest(ViewInStudioTest):
-    """Test the 'View in Studio' link visibility in a mongo backed course."""
-
-    def test_view_in_studio_link_studio_course(self):
-        """Regular Studio courses should see 'View in Studio' links."""
-        self.setup_mongo_course()
-        result_fragment = self.module.render(STUDENT_VIEW, context=self.default_context)
-        self.assertIn('View Unit in Studio', result_fragment.content)
-
-    def test_view_in_studio_link_only_in_top_level_vertical(self):
-        """Regular Studio courses should not see 'View in Studio' for child verticals of verticals."""
-        self.setup_mongo_course()
-        # Render the parent vertical, then check that there is only a single "View Unit in Studio" link.
-        result_fragment = self.module.render(STUDENT_VIEW, context=self.default_context)
-        # The single "View Unit in Studio" link should appear before the first xmodule vertical definition.
-        parts = result_fragment.content.split('data-block-type="vertical"')
-        self.assertEqual(3, len(parts), "Did not find two vertical blocks")
-        self.assertIn('View Unit in Studio', parts[0])
-        self.assertNotIn('View Unit in Studio', parts[1])
-        self.assertNotIn('View Unit in Studio', parts[2])
-
-    def test_view_in_studio_link_xml_authored(self):
-        """Courses that change 'course_edit_method' setting can hide 'View in Studio' links."""
-        self.setup_mongo_course(course_edit_method='XML')
-        result_fragment = self.module.render(STUDENT_VIEW, context=self.default_context)
-        self.assertNotIn('View Unit in Studio', result_fragment.content)
-
-
-class MixedViewInStudioTest(ViewInStudioTest):
-    """Test the 'View in Studio' link visibility in a mixed mongo backed course."""
-
-    MODULESTORE = TEST_DATA_MIXED_MODULESTORE
-
-    def test_view_in_studio_link_mongo_backed(self):
-        """Mixed mongo courses that are mongo backed should see 'View in Studio' links."""
-        self.setup_mongo_course()
-        result_fragment = self.module.render(STUDENT_VIEW, context=self.default_context)
-        self.assertIn('View Unit in Studio', result_fragment.content)
-
-    def test_view_in_studio_link_xml_authored(self):
-        """Courses that change 'course_edit_method' setting can hide 'View in Studio' links."""
-        self.setup_mongo_course(course_edit_method='XML')
-        result_fragment = self.module.render(STUDENT_VIEW, context=self.default_context)
-        self.assertNotIn('View Unit in Studio', result_fragment.content)
-
-
 @XBlock.tag("detached")
 class DetachedXBlock(XBlock):
     """
     XBlock marked with the 'detached' flag.
     """
+
     def student_view(self, context=None):  # pylint: disable=unused-argument
         """
         A simple view that returns just enough to test.
@@ -1795,7 +1729,7 @@ class DetachedXBlock(XBlock):
 
 
 @patch.dict('django.conf.settings.FEATURES', {'DISPLAY_DEBUG_INFO_TO_STAFF': True, 'DISPLAY_HISTOGRAMS_TO_STAFF': True})
-@patch('courseware.module_render.has_access', Mock(return_value=True, autospec=True))
+@patch('lms.djangoapps.courseware.module_render.has_access', Mock(return_value=True, autospec=True))
 class TestStaffDebugInfo(SharedModuleStoreTestCase):
     """Tests to verify that Staff Debug Info panel and histograms are displayed to staff."""
 
@@ -1851,6 +1785,47 @@ class TestStaffDebugInfo(SharedModuleStoreTestCase):
         )
         result_fragment = module.render(STUDENT_VIEW)
         self.assertIn('Staff Debug', result_fragment.content)
+
+    def test_staff_debug_info_score_for_invalid_dropdown(self):
+        """
+        Verifies that for an invalid drop down problem, the max score is set
+        to zero in the html.
+        """
+        problem_xml = """
+        <problem>
+            <optionresponse>
+              <p>You can use this template as a guide to the simple editor markdown and OLX markup to use for dropdown problems. Edit this component to replace this template with your own assessment.</p>
+            <label>Add the question text, or prompt, here. This text is required.</label>
+            <description>You can add an optional tip or note related to the prompt like this. </description>
+            <optioninput>
+                <option correct="False">an incorrect answer</option>
+                <option correct="True">the correct answer</option>
+                <option correct="True">an incorrect answer</option>
+              </optioninput>
+            </optionresponse>
+        </problem>
+        """
+        problem_descriptor = ItemFactory.create(
+            category='problem',
+            data=problem_xml
+        )
+        module = render.get_module(
+            self.user,
+            self.request,
+            problem_descriptor.location,
+            self.field_data_cache
+        )
+        html_fragment = module.render(STUDENT_VIEW)
+        expected_score_override_html = textwrap.dedent("""<div>
+        <label for="sd_fs_{block_id}">Score (for override only):</label>
+        <input type="text" tabindex="0" id="sd_fs_{block_id}" placeholder="0"/>
+        <label for="sd_fs_{block_id}"> / 0</label>
+      </div>""")
+
+        self.assertIn(
+            expected_score_override_html.format(block_id=problem_descriptor.location.block_id),
+            html_fragment.content
+        )
 
     @XBlock.register_temp_plugin(DetachedXBlock, identifier='detached-block')
     def test_staff_debug_info_disabled_for_detached_blocks(self):
@@ -1932,12 +1907,20 @@ class TestStaffDebugInfo(SharedModuleStoreTestCase):
 
 
 PER_COURSE_ANONYMIZED_DESCRIPTORS = (LTIDescriptor, )
+PER_STUDENT_ANONYMIZED_XBLOCKS = [
+    AboutBlock,
+    CourseInfoBlock,
+    HtmlBlock,
+    ProblemBlock,
+    StaticTabBlock,
+    VideoBlock,
+]
 
 # The "set" here is to work around the bug that load_classes returns duplicates for multiply-declared classes.
-PER_STUDENT_ANONYMIZED_DESCRIPTORS = sorted(set(
+PER_STUDENT_ANONYMIZED_DESCRIPTORS = sorted(set([
     class_ for (name, class_) in XModuleDescriptor.load_classes()
     if not issubclass(class_, PER_COURSE_ANONYMIZED_DESCRIPTORS)
-), key=str)
+] + PER_STUDENT_ANONYMIZED_XBLOCKS), key=str)
 
 
 @ddt.ddt
@@ -1956,7 +1939,7 @@ class TestAnonymousStudentId(SharedModuleStoreTestCase, LoginEnrollmentTestCase)
         super(TestAnonymousStudentId, self).setUp()
         self.user = UserFactory()
 
-    @patch('courseware.module_render.has_access', Mock(return_value=True, autospec=True))
+    @patch('lms.djangoapps.courseware.module_render.has_access', Mock(return_value=True, autospec=True))
     def _get_anonymous_id(self, course_id, xblock_class):
         location = course_id.make_usage_key('dummy_category', 'dummy_name')
         descriptor = Mock(
@@ -1998,7 +1981,7 @@ class TestAnonymousStudentId(SharedModuleStoreTestCase, LoginEnrollmentTestCase)
     @ddt.data(*PER_STUDENT_ANONYMIZED_DESCRIPTORS)
     def test_per_student_anonymized_id(self, descriptor_class):
         for course_id in ('MITx/6.00x/2012_Fall', 'MITx/6.00x/2013_Spring'):
-            self.assertEquals(
+            self.assertEqual(
                 # This value is set by observation, so that later changes to the student
                 # id computation don't break old data
                 '5afe5d9bb03796557ee2614f5c9611fb',
@@ -2007,14 +1990,14 @@ class TestAnonymousStudentId(SharedModuleStoreTestCase, LoginEnrollmentTestCase)
 
     @ddt.data(*PER_COURSE_ANONYMIZED_DESCRIPTORS)
     def test_per_course_anonymized_id(self, descriptor_class):
-        self.assertEquals(
+        self.assertEqual(
             # This value is set by observation, so that later changes to the student
             # id computation don't break old data
             'e3b0b940318df9c14be59acb08e78af5',
             self._get_anonymous_id(CourseKey.from_string('MITx/6.00x/2012_Fall'), descriptor_class)
         )
 
-        self.assertEquals(
+        self.assertEqual(
             # This value is set by observation, so that later changes to the student
             # id computation don't break old data
             'f82b5416c9f54b5ce33989511bb5ef2e',
@@ -2022,7 +2005,7 @@ class TestAnonymousStudentId(SharedModuleStoreTestCase, LoginEnrollmentTestCase)
         )
 
 
-@patch('track.views.tracker', autospec=True)
+@patch('track.views.eventtracker', autospec=True)
 class TestModuleTrackingContext(SharedModuleStoreTestCase):
     """
     Ensure correct tracking information is included in events emitted during XBlock callback handling.
@@ -2053,7 +2036,7 @@ class TestModuleTrackingContext(SharedModuleStoreTestCase):
     def test_context_contains_display_name(self, mock_tracker):
         problem_display_name = u'Option Response Problem'
         module_info = self.handle_callback_and_get_module_info(mock_tracker, problem_display_name)
-        self.assertEquals(problem_display_name, module_info['display_name'])
+        self.assertEqual(problem_display_name, module_info['display_name'])
 
     @XBlockAside.register_temp_plugin(AsideTestType, 'test_aside')
     @patch('xmodule.modulestore.mongo.base.CachingDescriptorSystem.applicable_aside_types',
@@ -2074,19 +2057,27 @@ class TestModuleTrackingContext(SharedModuleStoreTestCase):
             return {'content': 'test1', 'data_field': 'test2'}
 
         AsideTestType.get_event_context = get_event_context
-        context_info = self.handle_callback_and_get_context_info(mock_tracker, problem_display_name)
+
+        # for different operations, there are different number of context calls.
+        # We are sending this `call_idx` to get the mock call that we are interested in.
+        context_info = self.handle_callback_and_get_context_info(mock_tracker, problem_display_name, call_idx=4)
+
         self.assertIn('asides', context_info)
         self.assertIn('test_aside', context_info['asides'])
         self.assertIn('content', context_info['asides']['test_aside'])
-        self.assertEquals(context_info['asides']['test_aside']['content'], 'test1')
+        self.assertEqual(context_info['asides']['test_aside']['content'], 'test1')
         self.assertIn('data_field', context_info['asides']['test_aside'])
-        self.assertEquals(context_info['asides']['test_aside']['data_field'], 'test2')
+        self.assertEqual(context_info['asides']['test_aside']['data_field'], 'test2')
 
-    def handle_callback_and_get_context_info(self, mock_tracker, problem_display_name=None):
+    def handle_callback_and_get_context_info(self,
+                                             mock_tracker,
+                                             problem_display_name=None,
+                                             call_idx=0):
         """
         Creates a fake module, invokes the callback and extracts the 'context'
         metadata from the emitted problem_check event.
         """
+
         descriptor_kwargs = {
             'category': 'problem',
             'data': self.problem_xml
@@ -2095,28 +2086,35 @@ class TestModuleTrackingContext(SharedModuleStoreTestCase):
             descriptor_kwargs['display_name'] = problem_display_name
 
         descriptor = ItemFactory.create(**descriptor_kwargs)
+        with patch('lms.djangoapps.courseware.module_render.tracker') as mock_tracker_for_context:
+            render.handle_xblock_callback(
+                self.request,
+                text_type(self.course.id),
+                quote_slashes(text_type(descriptor.location)),
+                'xmodule_handler',
+                'problem_check',
+            )
 
-        render.handle_xblock_callback(
-            self.request,
-            text_type(self.course.id),
-            quote_slashes(text_type(descriptor.location)),
-            'xmodule_handler',
-            'problem_check',
-        )
+            self.assertEquals(len(mock_tracker.emit.mock_calls), 1)
+            mock_call = mock_tracker.emit.mock_calls[0]
+            event = mock_call[2]
 
-        self.assertEquals(len(mock_tracker.send.mock_calls), 1)
-        mock_call = mock_tracker.send.mock_calls[0]
-        event = mock_call[1][0]
+            self.assertEquals(event['name'], 'problem_check')
 
-        self.assertEquals(event['event_type'], 'problem_check')
-        return event['context']
+            # for different operations, there are different number of context calls.
+            # We are sending this `call_idx` to get the mock call that we are interested in.
+            context = mock_tracker_for_context.get_tracker.mock_calls[call_idx][1][1]
+
+            return context
 
     def handle_callback_and_get_module_info(self, mock_tracker, problem_display_name=None):
         """
         Creates a fake module, invokes the callback and extracts the 'module'
         metadata from the emitted problem_check event.
         """
-        event = self.handle_callback_and_get_context_info(mock_tracker, problem_display_name)
+        event = self.handle_callback_and_get_context_info(
+            mock_tracker, problem_display_name, call_idx=1
+        )
         return event['module']
 
     def test_missing_display_name(self, mock_tracker):
@@ -2159,12 +2157,12 @@ class TestXmoduleRuntimeEvent(TestSubmittingProblems):
         field_data_cache = FieldDataCache.cache_for_descriptor_descendents(
             self.course.id, user, self.course, depth=2)
 
-        return render.get_module(  # pylint: disable=protected-access
+        return render.get_module(
             user,
             mock_request,
             self.problem.location,
             field_data_cache,
-        )._xmodule
+        )
 
     def set_module_grade_using_publish(self, grade_dict):
         """Publish the user's grade, takes grade_dict as input"""
@@ -2214,6 +2212,7 @@ class TestRebindModule(TestSubmittingProblems):
     Tests to verify the functionality of rebinding a module.
     Inherit from TestSubmittingProblems to get functionality that set up a course structure
     """
+
     def setUp(self):
         super(TestRebindModule, self).setUp()
         self.homework = self.add_graded_section_to_course('homework')
@@ -2232,12 +2231,12 @@ class TestRebindModule(TestSubmittingProblems):
         if item is None:
             item = self.lti
 
-        return render.get_module(  # pylint: disable=protected-access
+        return render.get_module(
             user,
             mock_request,
             item.location,
             field_data_cache,
-        )._xmodule
+        )
 
     def test_rebind_module_to_new_users(self):
         module = self.get_module_for_user(self.user, self.problem)
@@ -2245,7 +2244,7 @@ class TestRebindModule(TestSubmittingProblems):
         # Bind the module to another student, which will remove "correct_map"
         # from the module's _field_data_cache and _dirty_fields.
         user2 = UserFactory.create()
-        module.descriptor.bind_for_student(module.system, user2.id)
+        module.bind_for_student(module.system, user2.id)
 
         # XBlock's save method assumes that if a field is in _dirty_fields,
         # then it's also in _field_data_cache. If this assumption
@@ -2254,7 +2253,7 @@ class TestRebindModule(TestSubmittingProblems):
         # _field_data cache, but not _dirty_fields, when we bound
         # this module to the second student. (TNL-2640)
         user3 = UserFactory.create()
-        module.descriptor.bind_for_student(module.system, user3.id)
+        module.bind_for_student(module.system, user3.id)
 
     def test_rebind_noauth_module_to_user_not_anonymous(self):
         """
@@ -2264,7 +2263,7 @@ class TestRebindModule(TestSubmittingProblems):
         module = self.get_module_for_user(self.user)
         user2 = UserFactory()
         user2.id = 2
-        with self.assertRaisesRegexp(
+        with self.assertRaisesRegex(
             render.LmsModuleRenderError,
             "rebind_noauth_module_to_user can only be called from a module bound to an anonymous user"
         ):
@@ -2278,11 +2277,11 @@ class TestRebindModule(TestSubmittingProblems):
         module = self.get_module_for_user(self.anon_user)
         user2 = UserFactory()
         user2.id = 2
-        module.system.rebind_noauth_module_to_user(module, user2)
+        module.system.rebind_noauth_module_to_user(module._xmodule, user2)  # pylint: disable=protected-access
         self.assertTrue(module)
         self.assertEqual(module.system.anonymous_student_id, anonymous_id_for_user(user2, self.course.id))
         self.assertEqual(module.scope_ids.user_id, user2.id)
-        self.assertEqual(module.descriptor.scope_ids.user_id, user2.id)
+        self.assertEqual(module._xmodule.scope_ids.user_id, user2.id)  # pylint: disable=protected-access
 
 
 @ddt.ddt
@@ -2410,7 +2409,7 @@ class EmptyXModuleDescriptorWithChildren(EmptyXModuleDescriptor):  # pylint: dis
 
 
 BLOCK_TYPES = ['xblock', 'xmodule']
-USER_NUMBERS = range(2)
+USER_NUMBERS = list(range(2))
 
 
 @ddt.ddt
@@ -2431,7 +2430,7 @@ class TestFilteredChildren(SharedModuleStoreTestCase):
         self.users = {number: UserFactory() for number in USER_NUMBERS}
 
         self._old_has_access = render.has_access
-        patcher = patch('courseware.module_render.has_access', self._has_access)
+        patcher = patch('lms.djangoapps.courseware.module_render.has_access', self._has_access)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -2506,10 +2505,10 @@ class TestFilteredChildren(SharedModuleStoreTestCase):
                 ItemFactory(category=child_type, parent=self.parent).scope_ids.usage_id
                 for child_type in BLOCK_TYPES
             ]
-            for user in self.users.itervalues()
+            for user in six.itervalues(self.users)
         }
 
-        self.all_children = sum(self.children_for_user.values(), [])
+        self.all_children = sum(list(self.children_for_user.values()), [])
 
         return modulestore().get_item(self.parent.scope_ids.usage_id)
 
@@ -2564,7 +2563,7 @@ class TestFilteredChildren(SharedModuleStoreTestCase):
         """
         Used to assert that sets of children are equivalent.
         """
-        self.assertEquals(set(child_usage_ids), set(child.scope_ids.usage_id for child in block.get_children()))
+        self.assertEqual(set(child_usage_ids), set(child.scope_ids.usage_id for child in block.get_children()))
 
 
 @ddt.ddt
@@ -2572,6 +2571,7 @@ class TestDisabledXBlockTypes(ModuleStoreTestCase):
     """
     Tests that verify disabled XBlock types are not loaded.
     """
+
     def setUp(self):
         super(TestDisabledXBlockTypes, self).setUp()
         XBlockConfiguration(name='video', enabled=False).save()
@@ -2587,11 +2587,11 @@ class TestDisabledXBlockTypes(ModuleStoreTestCase):
         """Tests that the list of disabled xblocks can dynamically update."""
         with self.store.default_store(default_ms):
             course = CourseFactory()
-            item_usage_id = self._verify_descriptor('problem', course, 'CapaDescriptorWithMixins')
+            item_usage_id = self._verify_descriptor('problem', course, 'ProblemBlockWithMixins')
             XBlockConfiguration(name='problem', enabled=False).save()
 
             # First verify that the cached value is used until there is a new request cache.
-            self._verify_descriptor('problem', course, 'CapaDescriptorWithMixins', item_usage_id)
+            self._verify_descriptor('problem', course, 'ProblemBlockWithMixins', item_usage_id)
 
             # Now simulate a new request cache.
             self.store.request_cache.data.clear()

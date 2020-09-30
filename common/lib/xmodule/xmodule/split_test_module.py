@@ -2,25 +2,27 @@
 Module for running content split tests
 """
 
-import logging
+
 import json
-from webob import Response
-from uuid import uuid4
+import logging
+import threading
+from functools import reduce
 from operator import itemgetter
+from uuid import uuid4
 
-from xmodule.progress import Progress
-from xmodule.seq_module import SequenceDescriptor
-from xmodule.studio_editable import StudioEditableModule, StudioEditableDescriptor
-from xmodule.x_module import XModule, module_attr, STUDENT_VIEW
-from xmodule.validation import StudioValidation, StudioValidationMessage
-from xmodule.modulestore.inheritance import UserPartitionList
-
+import six
 from lxml import etree
 from six import text_type
-
 from web_fragments.fragment import Fragment
+from webob import Response
 from xblock.core import XBlock
-from xblock.fields import Scope, Integer, String, ReferenceValueDict
+from xblock.fields import Integer, ReferenceValueDict, Scope, String
+from xmodule.modulestore.inheritance import UserPartitionList
+from xmodule.progress import Progress
+from xmodule.seq_module import SequenceDescriptor
+from xmodule.studio_editable import StudioEditableDescriptor, StudioEditableModule
+from xmodule.validation import StudioValidation, StudioValidationMessage
+from xmodule.x_module import STUDENT_VIEW, XModule, module_attr
 
 log = logging.getLogger('edx.' + __name__)
 
@@ -31,31 +33,41 @@ _ = lambda text: text
 DEFAULT_GROUP_NAME = _(u'Group ID {group_id}')
 
 
-class SplitTestFields(object):
-    """Fields needed for split test module"""
-    has_children = True
+class UserPartitionValues(threading.local):
+    """
+    A thread-local storage for available user_partitions
+    """
+    def __init__(self):
+        super().__init__()
+        self.values = []
 
-    # All available user partitions (with value and display name). This is updated each time
-    # editable_metadata_fields is called.
-    user_partition_values = []
-    # Default value used for user_partition_id
-    no_partition_selected = {'display_name': _("Not Selected"), 'value': -1}
-
-    @staticmethod
-    def build_partition_values(all_user_partitions, selected_user_partition):
+    def build_partition_values(self, all_user_partitions, selected_user_partition):
         """
         This helper method builds up the user_partition values that will
         be passed to the Studio editor
         """
-        SplitTestFields.user_partition_values = []
+        self.values = []
         # Add "No selection" value if there is not a valid selected user partition.
         if not selected_user_partition:
-            SplitTestFields.user_partition_values.append(SplitTestFields.no_partition_selected)
+            self.values.append(SplitTestFields.no_partition_selected)
         for user_partition in get_split_user_partitions(all_user_partitions):
-            SplitTestFields.user_partition_values.append(
+            self.values.append(
                 {"display_name": user_partition.name, "value": user_partition.id}
             )
-        return SplitTestFields.user_partition_values
+        return self.values
+
+
+# All available user partitions (with value and display name). This is updated each time
+# editable_metadata_fields is called.
+user_partition_values = UserPartitionValues()
+
+
+class SplitTestFields(object):
+    """Fields needed for split test module"""
+    has_children = True
+
+    # Default value used for user_partition_id
+    no_partition_selected = {'display_name': _("Not Selected"), 'value': -1}
 
     display_name = String(
         display_name=_("Display Name"),
@@ -76,7 +88,7 @@ class SplitTestFields(object):
         scope=Scope.content,
         display_name=_("Group Configuration"),
         default=no_partition_selected["value"],
-        values=lambda: SplitTestFields.user_partition_values  # Will be populated before the Studio editor is shown.
+        values=lambda: user_partition_values.values  # Will be populated before the Studio editor is shown.
     )
 
     # group_id is an int
@@ -179,7 +191,7 @@ class SplitTestModule(SplitTestFields, XModule, StudioEditableModule):
             child_descriptor = self.get_child_descriptor_by_location(child_location)
         else:
             # Oops.  Config error.
-            log.debug("configuration error in split test module: invalid group_id %r (not one of %r).  Showing error", str_group_id, self.group_id_to_child.keys())
+            log.debug("configuration error in split test module: invalid group_id %r (not one of %r).  Showing error", str_group_id, list(self.group_id_to_child.keys()))
 
         if child_descriptor is None:
             # Peak confusion is great.  Now that we set child_descriptor,
@@ -328,7 +340,7 @@ class SplitTestModule(SplitTestFields, XModule, StudioEditableModule):
             return fragment
 
     @XBlock.handler
-    def log_child_render(self, request, suffix=''):  # pylint: disable=unused-argument
+    def log_child_render(self, request, suffix=''):
         """
         Record in the tracking logs which child was rendered
         """
@@ -338,7 +350,7 @@ class SplitTestModule(SplitTestFields, XModule, StudioEditableModule):
         except Exception:
             log.info(
                 "Can't get usage_id of Nonetype object in course {course_key}".format(
-                    course_key=unicode(self.location.course_key)
+                    course_key=six.text_type(self.location.course_key)
                 )
             )
             raise
@@ -362,7 +374,7 @@ class SplitTestModule(SplitTestFields, XModule, StudioEditableModule):
         user_partition = self.descriptor.get_selected_partition()
         if user_partition:
             for group in user_partition.groups:
-                group_id = unicode(group.id)
+                group_id = six.text_type(group.id)
                 child_location = self.group_id_to_child.get(group_id, None)
                 if child_location == vertical.location:
                     return (group.name, group.id)
@@ -381,9 +393,10 @@ class SplitTestModule(SplitTestFields, XModule, StudioEditableModule):
         return self.descriptor.validate()
 
 
-@XBlock.needs('user_tags')  # pylint: disable=abstract-method
+@XBlock.needs('user_tags')
 @XBlock.needs('partitions')
 @XBlock.needs('user')
+# pylint: disable=missing-class-docstring
 class SplitTestDescriptor(SplitTestFields, SequenceDescriptor, StudioEditableDescriptor):
     # the editing interface can be the same as for sequences -- just a container
     module_class = SplitTestModule
@@ -476,7 +489,7 @@ class SplitTestDescriptor(SplitTestFields, SequenceDescriptor, StudioEditableDes
     @property
     def editable_metadata_fields(self):
         # Update the list of partitions based on the currently available user_partitions.
-        SplitTestFields.build_partition_values(self.user_partitions, self.get_selected_partition())
+        user_partition_values.build_partition_values(self.user_partitions, self.get_selected_partition())
 
         editable_fields = super(SplitTestDescriptor, self).editable_metadata_fields
 
@@ -534,7 +547,7 @@ class SplitTestDescriptor(SplitTestFields, SequenceDescriptor, StudioEditableDes
         # Compute the active children in the order specified by the user partition
         active_children = []
         for group in user_partition.groups:
-            group_id = unicode(group.id)
+            group_id = six.text_type(group.id)
             child_location = self.group_id_to_child.get(group_id, None)
             child = get_child_descriptor(child_location)
             if child:
@@ -647,7 +660,7 @@ class SplitTestDescriptor(SplitTestFields, SequenceDescriptor, StudioEditableDes
         return None
 
     @XBlock.handler
-    def add_missing_groups(self, request, suffix=''):  # pylint: disable=unused-argument
+    def add_missing_groups(self, request, suffix=''):
         """
         Create verticals for any missing groups in the split test instance.
 
@@ -657,7 +670,7 @@ class SplitTestDescriptor(SplitTestFields, SequenceDescriptor, StudioEditableDes
 
         changed = False
         for group in user_partition.groups:
-            str_group_id = unicode(group.id)
+            str_group_id = six.text_type(group.id)
             if str_group_id not in self.group_id_to_child:
                 user_id = self.runtime.service(self, 'user').get_current_user().opt_attrs['edx-platform.user_id']
                 self._create_vertical_for_group(group, user_id)
@@ -679,7 +692,7 @@ class SplitTestDescriptor(SplitTestFields, SequenceDescriptor, StudioEditableDes
             user_partition = self.get_selected_partition()
             if user_partition:
                 group_configuration_url = "{url}#{configuration_id}".format(
-                    url='/group_configurations/' + unicode(self.location.course_key),
+                    url='/group_configurations/' + six.text_type(self.location.course_key),
                     configuration_id=str(user_partition.id)
                 )
 
@@ -708,6 +721,6 @@ class SplitTestDescriptor(SplitTestFields, SequenceDescriptor, StudioEditableDes
             runtime=self.system,
         )
         self.children.append(dest_usage_key)  # pylint: disable=no-member
-        self.group_id_to_child[unicode(group.id)] = dest_usage_key
+        self.group_id_to_child[six.text_type(group.id)] = dest_usage_key
 
     tooltip_title = module_attr('tooltip_title')

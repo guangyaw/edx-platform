@@ -1,5 +1,6 @@
 """Defines ``Group`` and ``UserPartition`` models for partitioning"""
 
+
 from collections import namedtuple
 
 from stevedore.extension import ExtensionManager
@@ -125,7 +126,8 @@ class UserPartition(namedtuple("UserPartition", "id name description groups sche
     # The default scheme to be used when upgrading version 1 partitions.
     VERSION_1_SCHEME = "random"
 
-    def __new__(cls, id, name, description, groups, scheme=None, parameters=None, active=True, scheme_id=VERSION_1_SCHEME):  # pylint: disable=line-too-long
+    def __new__(cls, id, name, description, groups, scheme=None, parameters=None, active=True,
+                scheme_id=VERSION_1_SCHEME):
         if not scheme:
             scheme = UserPartition.get_scheme(scheme_id)
         if parameters is None:
@@ -279,3 +281,17 @@ class UserPartition(namedtuple("UserPartition", "id name description groups sche
         Returns: :class:`.Fragment`
         """
         return None
+
+
+def get_partition_from_id(partitions, user_partition_id):
+    """
+    Look for a user partition with a matching id in the provided list of partitions.
+
+    Returns:
+        A UserPartition, or None if not found.
+    """
+    for partition in partitions:
+        if partition.id == user_partition_id:
+            return partition
+
+    return None

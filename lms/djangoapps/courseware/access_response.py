@@ -2,6 +2,7 @@
 This file contains all the classes used by has_access for error handling
 """
 
+
 from django.utils.translation import ugettext as _
 
 from xmodule.course_metadata_utils import DEFAULT_START_DATE
@@ -36,7 +37,7 @@ class AccessResponse(object):
         if has_access:
             assert error_code is None
 
-    def __nonzero__(self):
+    def __bool__(self):
         """
         Overrides bool().
 
@@ -49,6 +50,8 @@ class AccessResponse(object):
 
         """
         return self.has_access
+
+    __nonzero__ = __bool__
 
     def to_json(self):
         """
@@ -121,7 +124,11 @@ class StartDateError(AccessError):
     Access denied because the course has not started yet and the user
     is not staff
     """
-    def __init__(self, start_date):
+    def __init__(self, start_date, display_error_to_user=True):
+        """
+        Arguments:
+            display_error_to_user: If True, display this error to users in the UI.
+        """
         error_code = "course_not_started"
         if start_date == DEFAULT_START_DATE:
             developer_message = u"Course has not started"
@@ -130,7 +137,11 @@ class StartDateError(AccessError):
             developer_message = u"Course does not start until {}".format(start_date)
             user_message = _(u"Course does not start until {}"
                              .format(u"{:%B %d, %Y}".format(start_date)))
-        super(StartDateError, self).__init__(error_code, developer_message, user_message)
+        super(StartDateError, self).__init__(
+            error_code,
+            developer_message,
+            user_message if display_error_to_user else None
+        )
 
 
 class MilestoneAccessError(AccessError):
@@ -149,11 +160,20 @@ class VisibilityError(AccessError):
     Access denied because the user does have the correct role to view this
     course.
     """
-    def __init__(self):
+    def __init__(self, display_error_to_user=True):
+        """
+        Arguments:
+            display_error_to_user: Should a message showing that access was denied to this content
+                be shown to the user?
+        """
         error_code = "not_visible_to_user"
         developer_message = u"Course is not visible to this user"
         user_message = _(u"You do not have access to this course")
-        super(VisibilityError, self).__init__(error_code, developer_message, user_message)
+        super(VisibilityError, self).__init__(
+            error_code,
+            developer_message,
+            user_message if display_error_to_user else None
+        )
 
 
 class MobileAvailabilityError(AccessError):
@@ -194,3 +214,36 @@ class NoAllowedPartitionGroupsError(AccessError):
         error_code = "no_allowed_user_groups"
         developer_message = u"Group access for {} excludes all students".format(partition.name)
         super(NoAllowedPartitionGroupsError, self).__init__(error_code, developer_message, user_message)
+
+
+class EnrollmentRequiredAccessError(AccessError):
+    """
+    Access denied because the user must be enrolled in the course
+    """
+    def __init__(self):
+        error_code = "enrollment_required"
+        developer_message = u"User must be enrolled in the course"
+        user_message = _(u"You must be enrolled in the course")
+        super(EnrollmentRequiredAccessError, self).__init__(error_code, developer_message, user_message)
+
+
+class AuthenticationRequiredAccessError(AccessError):
+    """
+    Access denied because the user must be authenticated to see it
+    """
+    def __init__(self):
+        error_code = "authentication_required"
+        developer_message = u"User must be authenticated to view the course"
+        user_message = _(u"You must be logged in to see this course")
+        super(AuthenticationRequiredAccessError, self).__init__(error_code, developer_message, user_message)
+
+
+class CoursewareMicrofrontendDisabledAccessError(AccessError):
+    """
+    Access denied because the courseware micro-frontend is disabled for this user.
+    """
+    def __init__(self):
+        error_code = 'microfrontend_disabled'
+        developer_message = u'Micro-frontend is disabled for this user'
+        user_message = _(u'Please view your course in the existing experience')
+        super(CoursewareMicrofrontendDisabledAccessError, self).__init__(error_code, developer_message, user_message)

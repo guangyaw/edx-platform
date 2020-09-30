@@ -4,6 +4,7 @@ Tests for BlockDepthTransformer.
 
 # pylint: disable=protected-access
 
+
 from unittest import TestCase
 
 import ddt

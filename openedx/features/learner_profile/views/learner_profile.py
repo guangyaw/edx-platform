@@ -1,16 +1,18 @@
 """ Views for a student's profile information. """
 
-from badges.utils import badges_enabled
+
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.exceptions import ObjectDoesNotExist
-from django.urls import reverse
 from django.http import Http404
-from django.shortcuts import render_to_response, redirect
+from django.shortcuts import redirect, render
+from django.urls import reverse
 from django.utils.translation import ugettext as _
 from django.views.decorators.http import require_http_methods
 from django_countries import countries
+
+from badges.utils import badges_enabled
 from edxmako.shortcuts import marketing_link
 from openedx.core.djangoapps.credentials.utils import get_credentials_records_url
 from openedx.core.djangoapps.programs.models import ProgramsApiConfig
@@ -19,12 +21,9 @@ from openedx.core.djangoapps.user_api.accounts.api import get_account_settings
 from openedx.core.djangoapps.user_api.errors import UserNotAuthorized, UserNotFound
 from openedx.core.djangoapps.user_api.preferences.api import get_user_preferences
 from openedx.core.djangolib.markup import HTML, Text
-from openedx.features.journals.api import journals_enabled
+from openedx.features.learner_profile.toggles import should_redirect_to_profile_microfrontend
+from openedx.features.learner_profile.views.learner_achievements import LearnerAchievementsFragmentView
 from student.models import User
-
-from .. import REDIRECT_TO_PROFILE_MICROFRONTEND
-
-from learner_achievements import LearnerAchievementsFragmentView
 
 
 @login_required
@@ -46,16 +45,16 @@ def learner_profile(request, username):
     Example usage:
         GET /account/profile
     """
-    is_profile_mfe_enabled_for_site = configuration_helpers.get_value('ENABLE_PROFILE_MICROFRONTEND')
-    if is_profile_mfe_enabled_for_site and REDIRECT_TO_PROFILE_MICROFRONTEND.is_enabled():
+    if should_redirect_to_profile_microfrontend():
         profile_microfrontend_url = "{}{}".format(settings.PROFILE_MICROFRONTEND_URL, username)
         return redirect(profile_microfrontend_url)
 
     try:
         context = learner_profile_context(request, username, request.user.is_staff)
-        return render_to_response(
-            'learner_profile/learner_profile.html',
-            context
+        return render(
+            request=request,
+            template_name='learner_profile/learner_profile.html',
+            context=context
         )
     except (UserNotAuthorized, UserNotFound, ObjectDoesNotExist):
         raise Http404
@@ -85,15 +84,8 @@ def learner_profile_context(request, profile_username, user_is_staff):
 
     preferences_data = get_user_preferences(profile_user, profile_username)
 
-    achievements_fragment = LearnerAchievementsFragmentView().render_to_fragment(
-        request,
-        username=profile_user.username,
-        own_profile=own_profile,
-    )
-
     context = {
         'own_profile': own_profile,
-        'achievements_fragment': achievements_fragment,
         'platform_name': configuration_helpers.get_value('platform_name', settings.PLATFORM_NAME),
         'data': {
             'profile_user_id': profile_user.id,
@@ -120,12 +112,19 @@ def learner_profile_context(request, profile_username, user_is_staff):
             'social_platforms': settings.SOCIAL_PLATFORMS,
         },
         'show_program_listing': ProgramsApiConfig.is_enabled(),
-        'show_journal_listing': journals_enabled(),
         'show_dashboard_tabs': True,
         'disable_courseware_js': True,
         'nav_hidden': True,
         'records_url': get_credentials_records_url(),
     }
+
+    if own_profile or user_is_staff:
+        achievements_fragment = LearnerAchievementsFragmentView().render_to_fragment(
+            request,
+            username=profile_user.username,
+            own_profile=own_profile,
+        )
+        context['achievements_fragment'] = achievements_fragment
 
     if badges_enabled():
         context['data']['badges_api_url'] = reverse("badges_api:user_assertions", kwargs={'username': profile_username})

@@ -3,17 +3,18 @@
 Unit tests for embargo app admin forms.
 """
 
-from django.test import TestCase
 
-from opaque_keys.edx.locator import CourseLocator
-
+import six
 # Explicitly import the cache from ConfigurationModel so we can reset it after each test
 from config_models.models import cache
-from ..models import IPFilter
-from ..forms import RestrictedCourseForm, IPFilterForm
+from django.test import TestCase
+from opaque_keys.edx.locator import CourseLocator
 
 from xmodule.modulestore.tests.django_utils import ModuleStoreTestCase
 from xmodule.modulestore.tests.factories import CourseFactory
+
+from ..forms import IPFilterForm, RestrictedCourseForm
+from ..models import IPFilter
 
 
 class RestrictedCourseFormTest(ModuleStoreTestCase):
@@ -22,7 +23,7 @@ class RestrictedCourseFormTest(ModuleStoreTestCase):
     def test_save_valid_data(self):
         course = CourseFactory.create()
         data = {
-            'course_key': unicode(course.id),
+            'course_key': six.text_type(course.id),
             'enroll_msg_key': 'default',
             'access_msg_key': 'default'
         }
@@ -48,7 +49,7 @@ class RestrictedCourseFormTest(ModuleStoreTestCase):
         msg = 'COURSE NOT FOUND'
         self.assertIn(msg, form._errors['course_key'][0])  # pylint: disable=protected-access
 
-        with self.assertRaisesRegexp(
+        with self.assertRaisesRegex(
             ValueError, "The RestrictedCourse could not be created because the data didn't validate."
         ):
             form.save()
@@ -115,12 +116,21 @@ class IPFilterFormTest(TestCase):
         form = IPFilterForm(data=form_data)
         self.assertFalse(form.is_valid())
 
-        wmsg = "Invalid IP Address(es): [u'.0.0.1', u':dead:beef:::', u'1.0.0.0/55']" \
-               " Please fix the error(s) and try again."
-        self.assertEquals(wmsg, form._errors['whitelist'][0])  # pylint: disable=protected-access
-        bmsg = "Invalid IP Address(es): [u'18.244.*', u'999999:c0a8:101::42', u'1.0.0.0/']" \
-               " Please fix the error(s) and try again."
-        self.assertEquals(bmsg, form._errors['blacklist'][0])  # pylint: disable=protected-access
+        if six.PY2:
+            wmsg = "Invalid IP Address(es): [u'.0.0.1', u':dead:beef:::', u'1.0.0.0/55']" \
+                   " Please fix the error(s) and try again."
+        else:
+            wmsg = "Invalid IP Address(es): ['.0.0.1', ':dead:beef:::', '1.0.0.0/55']" \
+                   " Please fix the error(s) and try again."
+        self.assertEqual(wmsg, form._errors['whitelist'][0])  # pylint: disable=protected-access
 
-        with self.assertRaisesRegexp(ValueError, "The IPFilter could not be created because the data didn't validate."):
+        if six.PY2:
+            bmsg = "Invalid IP Address(es): [u'18.244.*', u'999999:c0a8:101::42', u'1.0.0.0/']" \
+                   " Please fix the error(s) and try again."
+        else:
+            bmsg = "Invalid IP Address(es): ['18.244.*', '999999:c0a8:101::42', '1.0.0.0/']" \
+                   " Please fix the error(s) and try again."
+        self.assertEqual(bmsg, form._errors['blacklist'][0])  # pylint: disable=protected-access
+
+        with self.assertRaisesRegex(ValueError, "The IPFilter could not be created because the data didn't validate."):
             form.save()

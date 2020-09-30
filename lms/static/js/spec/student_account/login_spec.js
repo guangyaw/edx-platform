@@ -18,10 +18,10 @@
                     requests = null,
                     authComplete = false,
                     PLATFORM_NAME = 'edX',
+                    ENTERPRISE_SLUG_LOGIN_URL = 'enterprise/login',
                     USER_DATA = {
                         email: 'xsy@edx.org',
                         password: 'xsyisawesome',
-                        remember: true
                     },
                     THIRD_PARTY_AUTH = {
                         currentProvider: null,
@@ -65,16 +65,6 @@
                                 required: true,
                                 instructions: 'Enter your password.',
                                 restrictions: {}
-                            },
-                            {
-                                placeholder: '',
-                                name: 'remember',
-                                label: 'Remember me',
-                                defaultValue: '',
-                                type: 'checkbox',
-                                required: true,
-                                instructions: 'Agree to the terms of service.',
-                                restrictions: {}
                             }
                         ]
                     },
@@ -99,7 +89,8 @@
                         model: model,
                         resetModel: resetModel,
                         thirdPartyAuth: THIRD_PARTY_AUTH,
-                        platformName: PLATFORM_NAME
+                        platformName: PLATFORM_NAME,
+                        enterpriseSlugLoginURL: ENTERPRISE_SLUG_LOGIN_URL
                     });
 
                 // Spy on AJAX requests
@@ -119,9 +110,6 @@
                 // Simulate manual entry of login form data
                     $('#login-email').val(USER_DATA.email);
                     $('#login-password').val(USER_DATA.password);
-
-                // Check the 'Remember me' checkbox
-                    $('#login-remember').prop('checked', USER_DATA.remember);
 
                 // If validationSuccess isn't passed, we avoid
                 // spying on `view.validate` twice
@@ -205,11 +193,18 @@
                     expect($('.button-oa2-facebook')).toBeVisible();
                 });
 
-                it('displays a link to the password reset form', function() {
+                it('displays a link to the signin help', function() {
                     createLoginView(this);
 
-                // Verify that the password reset link is displayed
-                    expect($('.forgot-password')).toBeVisible();
+                // Verify that the Signin help link is displayed
+                    expect($('.login-help')).toBeVisible();
+                });
+
+                it('displays a link to the enterprise slug login', function() {
+                    createLoginView(this);
+
+                // Verify that the enterprise login link is displayed
+                    expect($('.enterprise-login')).toBeVisible();
                 });
 
                 it('displays password reset success message after password reset request', function() {

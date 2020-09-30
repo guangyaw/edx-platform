@@ -2,10 +2,14 @@
 Block Structure Transformer Registry implemented using the platform's
 PluginManager.
 """
+
+
 from base64 import b64encode
 from hashlib import sha1
 
-from openedx.core.lib.plugins import PluginManager
+import six
+from edx_django_utils.plugins import PluginManager
+
 from openedx.core.lib.cache_utils import process_cached
 
 
@@ -30,7 +34,7 @@ class TransformerRegistry(PluginManager):
                 registered with the platform's PluginManager.
         """
         if cls.USE_PLUGIN_MANAGER:
-            return set(cls.get_available_plugins().itervalues())
+            return set(six.itervalues(cls.get_available_plugins()))
         else:
             return set()
 
@@ -45,10 +49,10 @@ class TransformerRegistry(PluginManager):
 
         sorted_transformers = sorted(cls.get_registered_transformers(), key=lambda t: t.name())
         for transformer in sorted_transformers:
-            hash_obj.update(transformer.name().encode('utf-8'))
-            hash_obj.update(str(transformer.WRITE_VERSION))
+            hash_obj.update(six.b(transformer.name()))
+            hash_obj.update(six.b(str(transformer.WRITE_VERSION)))
 
-        return b64encode(hash_obj.digest())
+        return b64encode(hash_obj.digest()).decode('utf-8')
 
     @classmethod
     def find_unregistered(cls, transformers):

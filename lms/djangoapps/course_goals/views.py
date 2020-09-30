@@ -1,26 +1,24 @@
 """
 Course Goals Views - includes REST API
 """
-from __future__ import absolute_import
+
 
 from django.contrib.auth import get_user_model
-from django.conf import settings
 from django.db.models.signals import post_save
 from django.dispatch import receiver
 from django.http import JsonResponse
 from edx_rest_framework_extensions.auth.jwt.authentication import JwtAuthentication
 from eventtracking import tracker
 from opaque_keys.edx.keys import CourseKey
-from openedx.core.lib.api.permissions import IsStaffOrOwner
-from rest_framework import permissions, serializers, viewsets, status
+from rest_framework import permissions, serializers, status, viewsets
 from rest_framework.authentication import SessionAuthentication
 from rest_framework.response import Response
 
+from openedx.core.lib.api.permissions import IsStaffOrOwner
 from track import segment
 
 from .api import get_course_goal_options
-from .models import CourseGoal, GOAL_KEY_CHOICES
-
+from .models import GOAL_KEY_CHOICES, CourseGoal
 
 User = get_user_model()
 
@@ -59,6 +57,7 @@ class CourseGoalViewSet(viewsets.ModelViewSet):
     queryset = CourseGoal.objects.all()
     serializer_class = CourseGoalSerializer
 
+    # Another version of this endpoint exists in ../course_home_api/outline/v1/views.py
     def create(self, post_data):
         """ Create a new goal if one does not exist, otherwise update the existing goal. """
         # Ensure goal_key is valid

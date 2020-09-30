@@ -1,5 +1,6 @@
 """Handle events that were forwarded from the Segment webhook integration"""
 
+
 import json
 import logging
 
@@ -9,10 +10,10 @@ from django.contrib.auth.models import User
 from django.http import HttpResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
+from eventtracking import tracker
 from opaque_keys import InvalidKeyError
 from opaque_keys.edx.keys import CourseKey
 
-from eventtracking import tracker
 from util.json_request import expect_json
 
 log = logging.getLogger(__name__)
@@ -126,7 +127,7 @@ def track_segmentio_event(request):  # pylint: disable=too-many-statements
 
     # Start with the context provided by Segment in the "client" field if it exists
     # We should tightly control which fields actually get included in the event emitted.
-    segment_context = full_segment_event.get('context')
+    segment_context = full_segment_event.get('context', {})
 
     # Build up the event context by parsing fields out of the event received from Segment
     context = {}
@@ -162,7 +163,7 @@ def track_segmentio_event(request):  # pylint: disable=too-many-statements
     if 'application' not in app_context:
         context['application'] = {
             'name': app_context.get('app_name', ''),
-            'version': '' if not segment_context else segment_context.get('app', {}).get('version', '')
+            'version': segment_context.get('app', {}).get('version', ''),
         }
     app_context.pop('app_name', None)
 

@@ -2,15 +2,21 @@
 View logic for handling course messages.
 """
 
+
 from datetime import datetime
 
 from babel.dates import format_date, format_timedelta
-from courseware.courses import get_course_date_blocks, get_course_with_access
 from django.contrib import auth
 from django.template.loader import render_to_string
 from django.utils.http import urlquote_plus
 from django.utils.translation import get_language, to_locale
 from django.utils.translation import ugettext as _
+from opaque_keys.edx.keys import CourseKey
+from pytz import UTC
+from web_fragments.fragment import Fragment
+
+from course_modes.models import CourseMode
+from lms.djangoapps.courseware.courses import get_course_date_blocks, get_course_with_access
 from lms.djangoapps.course_goals.api import (
     get_course_goal,
     get_course_goal_options,
@@ -19,14 +25,11 @@ from lms.djangoapps.course_goals.api import (
     valid_course_goals_ordered
 )
 from lms.djangoapps.course_goals.models import GOAL_KEY_CHOICES
-from lms.djangoapps.courseware.courses import allow_public_access
-from opaque_keys.edx.keys import CourseKey
+from lms.djangoapps.courseware.access_utils import check_public_access
 from openedx.core.djangoapps.plugin_api.views import EdxFragmentView
 from openedx.core.djangolib.markup import HTML, Text
 from openedx.features.course_experience import CourseHomeMessages
-from pytz import UTC
 from student.models import CourseEnrollment
-from web_fragments.fragment import Fragment
 from xmodule.course_module import COURSE_VISIBILITY_PUBLIC
 
 
@@ -71,7 +74,7 @@ class CourseHomeMessageFragmentView(EdxFragmentView):
         _register_course_home_messages(request, course, user_access, course_start_data)
 
         # Register course date alerts
-        for course_date_block in get_course_date_blocks(course, request.user):
+        for course_date_block in get_course_date_blocks(course, request.user, request):
             course_date_block.register_alerts(request, course)
 
         # Register a course goal message, if appropriate
@@ -108,14 +111,15 @@ def _register_course_home_messages(request, course, user_access, course_start_da
     """
     Register messages to be shown in the course home content page.
     """
-    allow_anonymous = allow_public_access(course, [COURSE_VISIBILITY_PUBLIC])
+    allow_anonymous = check_public_access(course, [COURSE_VISIBILITY_PUBLIC])
 
     if user_access['is_anonymous'] and not allow_anonymous:
+        sign_in_or_register_text = (_(u'{sign_in_link} or {register_link} and then enroll in this course.')
+                                    if not CourseMode.is_masters_only(course.id)
+                                    else _(u'{sign_in_link} or {register_link}.'))
         CourseHomeMessages.register_info_message(
             request,
-            Text(_(
-                u'{sign_in_link} or {register_link} and then enroll in this course.'
-            )).format(
+            Text(sign_in_or_register_text).format(
                 sign_in_link=HTML(u'<a href="/login?next={current_url}">{sign_in_label}</a>').format(
                     sign_in_label=_('Sign in'),
                     current_url=urlquote_plus(request.path),
@@ -129,7 +133,20 @@ def _register_course_home_messages(request, course, user_access, course_start_da
         )
     if not user_access['is_anonymous'] and not user_access['is_staff'] and \
             not user_access['is_enrolled']:
-        if not course.invitation_only:
+
+        title = Text(_(u'Welcome to {course_display_name}')).format(
+            course_display_name=course.display_name
+        )
+
+        if CourseMode.is_masters_only(course.id):
+            # if a course is a Master's only course, we will not offer user ability to self-enroll
+            CourseHomeMessages.register_info_message(
+                request,
+                Text(_('You must be enrolled in the course to see course content. '
+                       'Please contact your degree administrator or edX Support if you have questions.')),
+                title=title
+            )
+        elif not course.invitation_only:
             CourseHomeMessages.register_info_message(
                 request,
                 Text(_(
@@ -138,9 +155,7 @@ def _register_course_home_messages(request, course, user_access, course_start_da
                     open_enroll_link=HTML('<button class="enroll-btn btn-link">'),
                     close_enroll_link=HTML('</button>')
                 ),
-                title=Text(_(u'Welcome to {course_display_name}')).format(
-                    course_display_name=course.display_name
-                )
+                title=title
             )
         else:
             CourseHomeMessages.register_info_message(

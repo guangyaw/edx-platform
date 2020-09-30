@@ -1,6 +1,8 @@
 """
 Tests for VisibilityTransformer.
 """
+
+
 import ddt
 
 from ..visibility import VisibilityTransformer

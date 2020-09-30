@@ -14,10 +14,6 @@ function show_help {
 function clean_file {
     FILE_PATH=$1
     TEMP_FILE=${FILE_PATH}.tmp
-    # If an editable VCS URL has a version number suffix, it was only editable for pip-compile's benefit;
-    # this is a workaround for https://github.com/jazzband/pip-tools/issues/355
-    sed 's/-e \(.*==.*\)/\1/' ${FILE_PATH} > ${TEMP_FILE}
-    mv ${TEMP_FILE} ${FILE_PATH}
     # Workaround for https://github.com/jazzband/pip-tools/issues/204 -
     # change absolute paths for local editable packages back to relative ones
     FILE_CONTENT=$(<${FILE_PATH})
@@ -32,7 +28,7 @@ function clean_file {
     # Code sandbox local package installs must be non-editable due to file
     # permissions issues.  edxapp ones must stay editable until assorted
     # packaging bugs are fixed.
-    if [[ "${FILE_PATH}" == "requirements/edx-sandbox/base.txt" ]]; then
+    if [[ "${FILE_PATH}" == "requirements/edx-sandbox/py35.txt" ]]; then
         sed "s|-e common/lib/|common/lib/|" ${FILE_PATH} > ${TEMP_FILE}
         mv ${TEMP_FILE} ${FILE_PATH}
     fi

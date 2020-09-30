@@ -1,4 +1,7 @@
-""" Search index used to load data into elasticsearch"""
+"""
+Search index used to load data into elasticsearch.
+"""
+
 
 import logging
 from functools import wraps

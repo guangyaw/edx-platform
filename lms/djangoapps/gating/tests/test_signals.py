@@ -1,6 +1,8 @@
 """
 Unit tests for gating.signals module
 """
+
+
 from mock import Mock, patch
 
 from gating.signals import evaluate_subsection_gated_milestones

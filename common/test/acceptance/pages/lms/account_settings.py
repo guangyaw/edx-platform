@@ -1,6 +1,8 @@
 """
 Base class for account settings page.
 """
+
+
 from bok_choy.page_object import PageObject
 from bok_choy.promise import EmptyPromise
 

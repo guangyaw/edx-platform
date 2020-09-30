@@ -3,7 +3,7 @@ Views related to content libraries.
 A content library is a structure containing XBlocks which can be re-used in the
 multiple courses.
 """
-from __future__ import absolute_import
+
 
 import logging
 
@@ -36,6 +36,8 @@ from xmodule.modulestore import ModuleStoreEnum
 from xmodule.modulestore.django import modulestore
 from xmodule.modulestore.exceptions import DuplicateCourseError
 
+from ..config.waffle import REDIRECT_TO_LIBRARY_AUTHORING_MICROFRONTEND
+
 from .component import CONTAINER_TEMPLATES, get_component_templates
 from .user import user_with_role
 
@@ -44,6 +46,21 @@ __all__ = ['library_handler', 'manage_library_users']
 log = logging.getLogger(__name__)
 
 LIBRARIES_ENABLED = settings.FEATURES.get('ENABLE_CONTENT_LIBRARIES', False)
+ENABLE_LIBRARY_AUTHORING_MICROFRONTEND = settings.FEATURES.get('ENABLE_LIBRARY_AUTHORING_MICROFRONTEND', False)
+LIBRARY_AUTHORING_MICROFRONTEND_URL = settings.LIBRARY_AUTHORING_MICROFRONTEND_URL
+
+
+def should_redirect_to_library_authoring_mfe():
+    """
+    Boolean helper method, returns whether or not to redirect to the Library
+    Authoring MFE based on settings and flags.
+    """
+
+    return (
+        ENABLE_LIBRARY_AUTHORING_MICROFRONTEND and
+        LIBRARY_AUTHORING_MICROFRONTEND_URL and
+        REDIRECT_TO_LIBRARY_AUTHORING_MICROFRONTEND.is_enabled()
+    )
 
 
 def get_library_creator_status(user):
@@ -106,13 +123,13 @@ def _display_library(library_key_string, request):
     if not has_studio_read_access(request.user, library_key):
         log.exception(
             u"User %s tried to access library %s without permission",
-            request.user.username, unicode(library_key)
+            request.user.username, text_type(library_key)
         )
         raise PermissionDenied()
 
     library = modulestore().get_library(library_key)
     if library is None:
-        log.exception(u"Library %s not found", unicode(library_key))
+        log.exception(u"Library %s not found", text_type(library_key))
         raise Http404
 
     response_format = 'html'
@@ -127,15 +144,33 @@ def _display_library(library_key_string, request):
 
 def _list_libraries(request):
     """
-    List all accessible libraries
+    List all accessible libraries, after applying filters in the request
+    Query params:
+        org - The organization used to filter libraries
+        text_search - The string used to filter libraries by searching in title, id or org
     """
+    org = request.GET.get('org', '')
+    text_search = request.GET.get('text_search', '').lower()
+
+    if org:
+        libraries = modulestore().get_libraries(org=org)
+    else:
+        libraries = modulestore().get_libraries()
+
     lib_info = [
         {
             "display_name": lib.display_name,
-            "library_key": unicode(lib.location.library_key),
+            "library_key": text_type(lib.location.library_key),
         }
-        for lib in modulestore().get_libraries()
-        if has_studio_read_access(request.user, lib.location.library_key)
+        for lib in libraries
+        if (
+            (
+                text_search in lib.display_name.lower() or
+                text_search in lib.location.library_key.org.lower() or
+                text_search in lib.location.library_key.library.lower()
+            ) and
+            has_studio_read_access(request.user, lib.location.library_key)
+        )
     ]
     return JsonResponse(lib_info)
 
@@ -182,7 +217,7 @@ def _create_library(request):
             )
         })
 
-    lib_key_str = unicode(new_lib.location.library_key)
+    lib_key_str = text_type(new_lib.location.library_key)
     return JsonResponse({
         'url': reverse_library_url('library_handler', lib_key_str),
         'library_key': lib_key_str,
@@ -208,10 +243,10 @@ def library_blocks_view(library, user, response_format):
         prev_version = library.runtime.course_entry.structure['previous_version']
         return JsonResponse({
             "display_name": library.display_name,
-            "library_id": unicode(library.location.library_key),
-            "version": unicode(library.runtime.course_entry.course_key.version_guid),
-            "previous_version": unicode(prev_version) if prev_version else None,
-            "blocks": [unicode(x) for x in children],
+            "library_id": text_type(library.location.library_key),
+            "version": text_type(library.runtime.course_entry.course_key.version_guid),
+            "previous_version": text_type(prev_version) if prev_version else None,
+            "blocks": [text_type(x) for x in children],
         })
 
     can_edit = has_studio_write_access(user, library.location.library_key)
@@ -261,7 +296,7 @@ def manage_library_users(request, library_key_string):
         'context_library': library,
         'users': formatted_users,
         'allow_actions': bool(user_perms & STUDIO_EDIT_ROLES),
-        'library_key': unicode(library_key),
+        'library_key': text_type(library_key),
         'lib_users_url': reverse_library_url('manage_library_users', library_key_string),
         'show_children_previews': library.show_children_previews
     })

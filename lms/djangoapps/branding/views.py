@@ -1,21 +1,23 @@
 """Views for the branding app. """
-import logging
-import urllib
 
+import logging
+
+import six
 from django.conf import settings
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.core.cache import cache
-from django.urls import reverse
 from django.db import transaction
 from django.http import Http404, HttpResponse
 from django.shortcuts import redirect
+from django.urls import reverse
+from django.urls.exceptions import NoReverseMatch
 from django.utils import translation
 from django.utils.translation.trans_real import get_supported_language_variant
 from django.views.decorators.cache import cache_control
 from django.views.decorators.csrf import ensure_csrf_cookie
 
 import branding.api as branding_api
-import courseware.views.views
+import lms.djangoapps.courseware.views.views as courseware_views
 import student.views
 from edxmako.shortcuts import marketing_link, render_to_response
 from openedx.core.djangoapps.lang_pref.api import released_languages
@@ -41,7 +43,7 @@ def index(request):
         if configuration_helpers.get_value(
                 'ALWAYS_REDIRECT_HOMEPAGE_TO_DASHBOARD_FOR_AUTHENTICATED_USER',
                 settings.FEATURES.get('ALWAYS_REDIRECT_HOMEPAGE_TO_DASHBOARD_FOR_AUTHENTICATED_USER', True)):
-            return redirect(reverse('dashboard'))
+            return redirect('dashboard')
 
     enable_mktg_site = configuration_helpers.get_value(
         'ENABLE_MKTG_SITE',
@@ -60,11 +62,22 @@ def index(request):
     # keep specialized logic for Edge until we can migrate over Edge to fully use
     # configuration.
     if domain and 'edge.edx.org' in domain:
-        return redirect(reverse("signin_user"))
+        return redirect("signin_user")
 
     #  we do not expect this case to be reached in cases where
     #  marketing and edge are enabled
-    return student.views.index(request, user=request.user)
+
+    try:
+        return student.views.index(request, user=request.user)
+    except NoReverseMatch:
+        log.error(
+            'https is not a registered namespace Request from {}'.format(domain),
+            'request_site= {}'.format(request.site.__dict__),
+            'enable_mktg_site= {}'.format(enable_mktg_site),
+            'Auth Status= {}'.format(request.user.is_authenticated),
+            'Request Meta= {}'.format(request.META)
+        )
+        raise
 
 
 @ensure_csrf_cookie
@@ -88,7 +101,7 @@ def courses(request):
 
     #  we do not expect this case to be reached in cases where
     #  marketing is enabled or the courses are not browsable
-    return courseware.views.views.courses(request)
+    return courseware_views.courses(request)
 
 
 def _footer_static_url(request, name):
@@ -105,7 +118,7 @@ def _footer_css_urls(request, package_name):
     # to identify the CSS file name(s) to include in the footer.
     # We then construct an absolute URI so that external sites (such as the marketing site)
     # can locate the assets.
-    package = settings.PIPELINE_CSS.get(package_name, {})
+    package = settings.PIPELINE['STYLESHEETS'].get(package_name, {})
     paths = [package['output_filename']] if not settings.DEBUG else package['source_filenames']
     return [
         _footer_static_url(request, path)
@@ -207,7 +220,7 @@ def footer(request):
                 "image": "http://example.com/openedx.png"
             },
             "logo_image": "http://example.com/static/images/logo.png",
-            "copyright": "EdX, Open edX and their respective logos are trademarks or registered trademarks of edX Inc."
+            "copyright": "edX, Open edX and their respective logos are registered trademarks of edX Inc."
         }
 
 
@@ -273,7 +286,7 @@ def footer(request):
         }
         if include_language_selector:
             cache_params['language_selector_options'] = ','.join(sorted([lang.code for lang in released_languages()]))
-        cache_key = u"branding.footer.{params}.html".format(params=urllib.urlencode(cache_params))
+        cache_key = u"branding.footer.{params}.html".format(params=six.moves.urllib.parse.urlencode(cache_params))
 
         content = cache.get(cache_key)
         if content is None:
@@ -286,7 +299,7 @@ def footer(request):
 
     elif 'application/json' in accepts:
         cache_key = u"branding.footer.{params}.json".format(
-            params=urllib.urlencode({
+            params=six.moves.urllib.parse.urlencode({
                 'language': language,
                 'is_secure': request.is_secure(),
             })

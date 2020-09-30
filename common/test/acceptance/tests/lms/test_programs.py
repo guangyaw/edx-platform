@@ -1,4 +1,6 @@
 """Acceptance tests for LMS-hosted Programs pages"""
+
+
 from common.test.acceptance.fixtures.catalog import CatalogFixture, CatalogIntegrationMixin
 from common.test.acceptance.fixtures.course import CourseFixture
 from common.test.acceptance.fixtures.programs import ProgramsConfigMixin
@@ -72,41 +74,6 @@ class ProgramPageBase(ProgramsConfigMixin, CatalogIntegrationMixin, UniqueCourse
         cache_programs_page.visit()
 
 
-class ProgramListingPageTest(ProgramPageBase):
-    """Verify user-facing behavior of the program listing page."""
-    shard = 21
-
-    def setUp(self):
-        super(ProgramListingPageTest, self).setUp()
-
-        self.listing_page = ProgramListingPage(self.browser)
-
-    def test_no_enrollments(self):
-        """Verify that no cards appear when the user has no enrollments."""
-        self.auth(enroll=False)
-        self.stub_catalog_api(self.programs, self.pathways)
-        self.cache_programs()
-
-        self.listing_page.visit()
-
-        self.assertTrue(self.listing_page.is_sidebar_present)
-        self.assertFalse(self.listing_page.are_cards_present)
-
-    def test_no_programs(self):
-        """
-        Verify that no cards appear when the user has enrollments
-        but none are included in an active program.
-        """
-        self.auth()
-        self.stub_catalog_api(self.programs, self.pathways)
-        self.cache_programs()
-
-        self.listing_page.visit()
-
-        self.assertTrue(self.listing_page.is_sidebar_present)
-        self.assertFalse(self.listing_page.are_cards_present)
-
-
 class ProgramListingPageA11yTest(ProgramPageBase):
     """Test program listing page accessibility."""
     a11y = True
@@ -123,6 +90,7 @@ class ProgramListingPageA11yTest(ProgramPageBase):
         self.listing_page.a11y_audit.config.set_rules({
             "ignore": [
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
+                'region',  # TODO: AC-932
             ]
         })
         self.auth(enroll=False)
@@ -140,6 +108,8 @@ class ProgramListingPageA11yTest(ProgramPageBase):
         self.listing_page.a11y_audit.config.set_rules({
             "ignore": [
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
+                'landmark-complementary-is-top-level',  # TODO: AC-939
+                'region',  # TODO: AC-932
             ]
         })
         self.auth()
@@ -170,6 +140,8 @@ class ProgramDetailsPageA11yTest(ProgramPageBase):
         self.details_page.a11y_audit.config.set_rules({
             "ignore": [
                 'aria-valid-attr',  # TODO: LEARNER-6611 & LEARNER-6865
+                'landmark-complementary-is-top-level',  # TODO: AC-939
+                'region',  # TODO: AC-932
             ]
         })
         self.auth()

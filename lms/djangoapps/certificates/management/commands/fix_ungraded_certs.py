@@ -1,13 +1,15 @@
 """
 Management command which fixes ungraded certificates for students
 """
+
+
 import logging
 
 from django.core.management.base import BaseCommand
 
 from lms.djangoapps.certificates.models import GeneratedCertificate
-from courseware import courses
-from lms.djangoapps.grades.course_grade_factory import CourseGradeFactory
+from lms.djangoapps.courseware import courses
+from lms.djangoapps.grades.api import CourseGradeFactory
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         course_id = options['course']
         log.info(u'Fetching ungraded students for %s.', course_id)
-        ungraded = GeneratedCertificate.objects.filter(  # pylint: disable=no-member
+        ungraded = GeneratedCertificate.objects.filter(
             course_id__exact=course_id
         ).filter(grade__exact='')
         course = courses.get_course_by_id(course_id)

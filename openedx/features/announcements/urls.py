@@ -2,6 +2,7 @@
 Defines URLs for announcements in the LMS.
 """
 
+
 from django.conf.urls import url
 from django.contrib.auth.decorators import login_required
 

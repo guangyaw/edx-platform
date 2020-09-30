@@ -2,8 +2,11 @@
 Course API Serializers.  Representing course catalog data
 """
 
-import urllib
 
+from edx_django_utils import monitoring as monitoring_utils
+import six.moves.urllib.error
+import six.moves.urllib.parse
+import six.moves.urllib.request
 from django.urls import reverse
 from rest_framework import serializers
 
@@ -92,7 +95,7 @@ class CourseSerializer(serializers.Serializer):  # pylint: disable=abstract-meth
         """
         base_url = '?'.join([
             reverse('blocks_in_course'),
-            urllib.urlencode({'course_id': course_overview.id}),
+            six.moves.urllib.parse.urlencode({'course_id': course_overview.id}),
         ])
         return self.context['request'].build_absolute_uri(base_url)
 
@@ -119,3 +122,18 @@ class CourseDetailSerializer(CourseSerializer):  # pylint: disable=abstract-meth
         # fields from CourseSerializer, which get their data
         # from the CourseOverview object in SQL.
         return CourseDetails.fetch_about_attribute(course_overview.id, 'overview')
+
+
+class CourseKeySerializer(serializers.BaseSerializer):  # pylint:disable=abstract-method
+    """
+    Serializer that takes a CourseKey and serializes it to a string course_id.
+    """
+
+    @monitoring_utils.function_trace('course_key_serializer_to_representation')
+    def to_representation(self, instance):
+        # The function trace should be counting calls to this function, but I
+        # couldn't find it when I looked in any of the NR transaction traces,
+        # so I'm manually counting them using a custom metric:
+        monitoring_utils.increment('course_key_serializer_to_representation_call_count')
+
+        return str(instance)

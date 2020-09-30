@@ -2,14 +2,16 @@
 Views for building plugins.
 """
 
+
 import logging
 
 from django.conf import settings
 from django.contrib.staticfiles.storage import staticfiles_storage
 from django.http import HttpResponse
-from django.shortcuts import render_to_response
-from edxmako.shortcuts import is_any_marketing_link_set, is_marketing_link_set, marketing_link
+from django.shortcuts import render
 from web_fragments.views import FragmentView
+
+from edxmako.shortcuts import is_any_marketing_link_set, is_marketing_link_set, marketing_link
 
 log = logging.getLogger('plugin_api')
 
@@ -23,26 +25,26 @@ class EdxFragmentView(FragmentView):
     @staticmethod
     def get_css_dependencies(group):
         """
-        Returns list of CSS dependencies belonging to `group` in settings.PIPELINE_JS.
+        Returns list of CSS dependencies belonging to `group` in settings.PIPELINE['JAVASCRIPT'].
 
-        Respects `PIPELINE_ENABLED` setting.
+        Respects `PIPELINE['PIPELINE_ENABLED']` setting.
         """
-        if settings.PIPELINE_ENABLED:
-            return [settings.PIPELINE_CSS[group]['output_filename']]
+        if settings.PIPELINE['PIPELINE_ENABLED']:
+            return [settings.PIPELINE['STYLESHEETS'][group]['output_filename']]
         else:
-            return settings.PIPELINE_CSS[group]['source_filenames']
+            return settings.PIPELINE['STYLESHEETS'][group]['source_filenames']
 
     @staticmethod
     def get_js_dependencies(group):
         """
-        Returns list of JS dependencies belonging to `group` in settings.PIPELINE_JS.
+        Returns list of JS dependencies belonging to `group` in settings.PIPELINE['JAVASCRIPT'].
 
-        Respects `PIPELINE_ENABLED` setting.
+        Respects `PIPELINE['PIPELINE_ENABLED']` setting.
         """
-        if settings.PIPELINE_ENABLED:
-            return [settings.PIPELINE_JS[group]['output_filename']]
+        if settings.PIPELINE['PIPELINE_ENABLED']:
+            return [settings.PIPELINE['JAVASCRIPT'][group]['output_filename']]
         else:
-            return settings.PIPELINE_JS[group]['source_filenames']
+            return settings.PIPELINE['JAVASCRIPT'][group]['source_filenames']
 
     def vendor_js_dependencies(self):
         """
@@ -82,7 +84,7 @@ class EdxFragmentView(FragmentView):
         Creates the base context for rendering a fragment as a standalone page.
         """
         return {
-            'uses_pattern_library': True,
+            'uses_bootstrap': True,
             'disable_accordion': True,
             'allow_iframing': True,
             'disable_header': True,
@@ -130,11 +132,10 @@ class EdxFragmentView(FragmentView):
             'fragment': fragment,
             'page_title': self.standalone_page_title(request, fragment, **kwargs),
         })
-        if context.get('uses_pattern_library', False):
-            template = 'fragments/standalone-page-v2.html'
-        elif context.get('uses_bootstrap', False):
-            template = 'fragments/standalone-page-bootstrap.html'
-        else:
-            template = 'fragments/standalone-page-v1.html'
+        template_name = 'fragments/standalone-page-bootstrap.html'
 
-        return render_to_response(template, context)
+        return render(
+            request=request,
+            template_name=template_name,
+            context=context
+        )

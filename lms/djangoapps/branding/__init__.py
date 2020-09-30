@@ -7,9 +7,10 @@ This module provides functions to retrieve basic branded parts
 such as the site visible courses, university name and logo.
 """
 
-from django.conf import settings
 
+from django.conf import settings
 from opaque_keys.edx.keys import CourseKey
+
 from openedx.core.djangoapps.site_configuration import helpers as configuration_helpers
 
 

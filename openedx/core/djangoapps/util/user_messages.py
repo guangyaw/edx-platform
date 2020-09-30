@@ -14,12 +14,15 @@ There are two common use cases:
    used to show a success message to the use.
 """
 
+
 from abc import abstractmethod
 from enum import Enum
 
+import six
 from django.contrib import messages
 from django.utils.translation import ugettext as _
-from openedx.core.djangolib.markup import Text, HTML
+
+from openedx.core.djangolib.markup import HTML, Text
 
 
 class UserMessageType(Enum):
@@ -172,7 +175,7 @@ class UserMessageCollection():
             """
             return UserMessage(
                 type=_get_message_type_for_level(message.level),
-                message_html=unicode(message.message),
+                message_html=six.text_type(message.message),
             )
 
         django_messages = messages.get_messages(request)

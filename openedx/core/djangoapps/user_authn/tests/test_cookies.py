@@ -1,20 +1,21 @@
 # pylint: disable=missing-docstring
-from __future__ import unicode_literals
 
-from mock import MagicMock, patch
+
 import six
 from django.conf import settings
 from django.http import HttpResponse
-from django.urls import reverse
 from django.test import RequestFactory, TestCase
-
+from django.urls import reverse
 from edx_rest_framework_extensions.auth.jwt.decoder import jwt_decode_handler
 from edx_rest_framework_extensions.auth.jwt.middleware import JwtAuthCookieMiddleware
+from mock import MagicMock, patch
+
+from openedx.core.djangoapps.user_api.accounts.utils import retrieve_last_sitewide_block_completed
 from openedx.core.djangoapps.user_authn import cookies as cookies_api
 from openedx.core.djangoapps.user_authn.tests.utils import setup_login_oauth_client
-from openedx.core.djangoapps.user_api.accounts.utils import retrieve_last_sitewide_block_completed
+from openedx.core.djangolib.testing.utils import skip_unless_lms
 from student.models import CourseEnrollment
-from student.tests.factories import UserFactory, AnonymousUserFactory
+from student.tests.factories import AnonymousUserFactory, UserFactory
 
 
 class CookieTests(TestCase):
@@ -33,15 +34,10 @@ class CookieTests(TestCase):
     def _get_expected_header_urls(self):
         expected_header_urls = {
             'logout': reverse('logout'),
-            'resume_block': retrieve_last_sitewide_block_completed(self.user)
+            'resume_block': retrieve_last_sitewide_block_completed(self.user),
+            'account_settings': reverse('account_settings'),
+            'learner_profile': reverse('learner_profile', kwargs={'username': self.user.username}),
         }
-
-        # Studio (CMS) does not have the URLs below
-        if settings.ROOT_URLCONF == 'lms.urls':
-            expected_header_urls.update({
-                'account_settings': reverse('account_settings'),
-                'learner_profile': reverse('learner_profile', kwargs={'username': self.user.username}),
-            })
 
         # Convert relative URL paths to absolute URIs
         for url_name, url_path in six.iteritems(expected_header_urls):
@@ -52,7 +48,7 @@ class CookieTests(TestCase):
     def _copy_cookies_to_request(self, response, request):
         request.COOKIES = {
             key: val.value
-            for key, val in response.cookies.iteritems()
+            for key, val in six.iteritems(response.cookies)
         }
 
     def _set_use_jwt_cookie_header(self, request):
@@ -66,7 +62,7 @@ class CookieTests(TestCase):
         If can_recreate is False, verifies that a JWT cannot be recreated.
         """
         self._copy_cookies_to_request(response, self.request)
-        JwtAuthCookieMiddleware().process_request(self.request)
+        JwtAuthCookieMiddleware().process_view(self.request, None, None, None)
         self.assertEqual(
             cookies_api.jwt_cookies.jwt_cookie_name() in self.request.COOKIES,
             can_recreate,
@@ -87,6 +83,7 @@ class CookieTests(TestCase):
             len(set([response.cookies[c]['expires'] for c in response.cookies])),
         )
 
+    @skip_unless_lms
     def test_get_user_info_cookie_data(self):
         actual = cookies_api._get_user_info_cookie_data(self.request, self.user)  # pylint: disable=protected-access
 
@@ -94,7 +91,6 @@ class CookieTests(TestCase):
             'version': settings.EDXMKTG_USER_INFO_COOKIE_VERSION,
             'username': self.user.username,
             'header_urls': self._get_expected_header_urls(),
-            'enrollmentStatusHash': CourseEnrollment.generate_enrollment_status_hash(self.user)
         }
 
         self.assertDictEqual(actual, expected)

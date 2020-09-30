@@ -4,6 +4,8 @@ Helper lib for instructor_tasks API.
 Includes methods to check args for rescoring task, encoding student input,
 and task submission logic, including handling the Celery backend.
 """
+
+
 import hashlib
 import json
 import logging
@@ -12,10 +14,11 @@ from celery.result import AsyncResult
 from celery.states import FAILURE, READY_STATES, REVOKED, SUCCESS
 from django.utils.translation import ugettext as _
 from opaque_keys.edx.keys import UsageKey
+import six
 from six import text_type
 
-from courseware.courses import get_problems_in_section
-from courseware.module_render import get_xqueue_callback_url_prefix
+from lms.djangoapps.courseware.courses import get_problems_in_section
+from lms.djangoapps.courseware.module_render import get_xqueue_callback_url_prefix
 from lms.djangoapps.instructor_task.models import PROGRESS, InstructorTask
 from util.db import outer_atomic
 from xmodule.modulestore.django import modulestore
@@ -107,7 +110,6 @@ def generate_already_running_error_message(task_type):
         'profile_info_csv': _('enrolled learner profile'),
         'may_enroll_info_csv': _('enrollment'),
         'detailed_enrollment_report': _('detailed enrollment'),
-        'exec_summary_report': _('executive summary'),
         'course_survey_report': _('survey'),
         'proctored_exam_results_report': _('proctored exam results'),
         'export_ora2_data': _('ORA data'),
@@ -138,7 +140,7 @@ def _get_xmodule_instance_args(request, task_id):
     request_info = {'username': request.user.username,
                     'user_id': request.user.id,
                     'ip': request.META['REMOTE_ADDR'],
-                    'agent': request.META.get('HTTP_USER_AGENT', '').decode('latin1'),
+                    'agent': request.META.get('HTTP_USER_AGENT', '').encode().decode('latin1'),
                     'host': request.META['SERVER_NAME'],
                     }
 
@@ -262,6 +264,13 @@ def _handle_instructor_task_failure(instructor_task, error):
     raise QueueConnectionError()
 
 
+def _get_async_result(task_id):
+    """
+    Use this minor indirection to facilitate mocking the AsyncResult in tests.
+    """
+    return AsyncResult(task_id)
+
+
 def get_updated_instructor_task(task_id):
     """
     Returns InstructorTask object corresponding to a given `task_id`.
@@ -279,7 +288,7 @@ def get_updated_instructor_task(task_id):
     # if the task is not already known to be done, then we need to query
     # the underlying task's result object:
     if instructor_task.task_state not in READY_STATES:
-        result = AsyncResult(task_id)
+        result = _get_async_result(task_id)
         _update_instructor_task(instructor_task, result)
 
     return instructor_task
@@ -364,7 +373,7 @@ def check_entrance_exam_problems_for_rescoring(exam_key):  # pylint: disable=inv
     descriptor doesn't exist for exam_key. NotImplementedError is raised if
     any of the problem in entrance exam doesn't support re-scoring calls.
     """
-    problems = get_problems_in_section(exam_key).values()
+    problems = list(get_problems_in_section(exam_key).values())
     if any(not _supports_rescore(problem) for problem in problems):
         msg = _("Not all problems in entrance exam support re-scoring.")
         raise NotImplementedError(msg)
@@ -388,7 +397,7 @@ def encode_problem_and_student_input(usage_key, student=None):
         task_key_stub = "_{problem}".format(problem=text_type(usage_key))
 
     # create the key value by using MD5 hash:
-    task_key = hashlib.md5(task_key_stub).hexdigest()
+    task_key = hashlib.md5(six.b(task_key_stub)).hexdigest()
 
     return task_input, task_key
 
@@ -410,7 +419,7 @@ def encode_entrance_exam_and_student_input(usage_key, student=None):
         task_key_stub = "_{entranceexam}".format(entranceexam=text_type(usage_key))
 
     # create the key value by using MD5 hash:
-    task_key = hashlib.md5(task_key_stub).hexdigest()
+    task_key = hashlib.md5(task_key_stub.encode('utf-8')).hexdigest()
 
     return task_input, task_key
 
